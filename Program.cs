@@ -1,5 +1,8 @@
 ﻿var builder = WebApplication.CreateBuilder(args);
 
+eUseControl.DataAccess.DbSession.ConnectionString =
+    builder.Configuration.GetConnectionString("DefaultConnection");
+
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
