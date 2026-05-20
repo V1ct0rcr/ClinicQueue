@@ -1,4 +1,6 @@
-using eUseControl.Api.Domain.Entities.Patient;
+using eUseControl.BusinessLayer;
+using eUseControl.BusinessLayer.Interfaces;
+using eUseControl.Domain.Models.Patient;
 using Microsoft.AspNetCore.Mvc;
 
 namespace eUseControl.Api.Controllers;
@@ -7,19 +9,24 @@ namespace eUseControl.Api.Controllers;
 [ApiController]
 public class PatientsController : ControllerBase
 {
-    private static readonly List<PatientData> _patients = new();
-    private static int _nextId = 1;
+    private readonly IPatientAction _patientAction;
+
+    public PatientsController()
+    {
+        var bl = new BusinessLogic();
+        _patientAction = bl.PatientAction();
+    }
 
     [HttpGet]
-    public ActionResult<IEnumerable<PatientData>> GetAll()
+    public ActionResult<List<PatientDto>> GetAll()
     {
-        return Ok(_patients);
+        return Ok(_patientAction.GetAll());
     }
 
     [HttpGet("{id:int}")]
-    public ActionResult<PatientData> GetById(int id)
+    public ActionResult<PatientDto> GetById(int id)
     {
-        var patient = _patients.FirstOrDefault(p => p.Id == id);
+        var patient = _patientAction.GetById(id);
         if (patient is null)
             return NotFound();
 
@@ -27,43 +34,35 @@ public class PatientsController : ControllerBase
     }
 
     [HttpPost]
-    public ActionResult<PatientData> Create([FromBody] PatientData patient)
+    public ActionResult<PatientDto> Create([FromBody] PatientDto dto)
     {
-        if (string.IsNullOrWhiteSpace(patient.FirstName) || string.IsNullOrWhiteSpace(patient.Phone))
-            return BadRequest("FirstName and Phone are required.");
+        var result = _patientAction.Create(dto);
+        if (!result.IsSuccess)
+            return BadRequest(result.Message);
 
-        patient.Id = _nextId++;
-        _patients.Add(patient);
-
-        return CreatedAtAction(nameof(GetById), new { id = patient.Id }, patient);
+        return CreatedAtAction(nameof(GetById), new { id = result.Data!.Id }, result.Data);
     }
 
     [HttpPut("{id:int}")]
-    public ActionResult<PatientData> Update(int id, [FromBody] PatientData patient)
+    public ActionResult<PatientDto> Update(int id, [FromBody] PatientDto dto)
     {
-        if (string.IsNullOrWhiteSpace(patient.FirstName) || string.IsNullOrWhiteSpace(patient.Phone))
-            return BadRequest("FirstName and Phone are required.");
-
-        var existing = _patients.FirstOrDefault(p => p.Id == id);
-        if (existing is null)
+        if (_patientAction.GetById(id) is null)
             return NotFound();
 
-        existing.FirstName = patient.FirstName;
-        existing.LastName = patient.LastName;
-        existing.Phone = patient.Phone;
-        existing.Email = patient.Email;
+        var result = _patientAction.Update(id, dto);
+        if (!result.IsSuccess)
+            return BadRequest(result.Message);
 
-        return Ok(existing);
+        return Ok(result.Data);
     }
 
     [HttpDelete("{id:int}")]
     public IActionResult Delete(int id)
     {
-        var existing = _patients.FirstOrDefault(p => p.Id == id);
-        if (existing is null)
+        if (_patientAction.GetById(id) is null)
             return NotFound();
 
-        _patients.Remove(existing);
+        _patientAction.Delete(id);
         return NoContent();
     }
 }
