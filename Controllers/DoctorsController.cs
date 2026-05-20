@@ -1,4 +1,6 @@
-using eUseControl.Api.Domain.Entities.Doctor;
+using eUseControl.BusinessLayer;
+using eUseControl.BusinessLayer.Interfaces;
+using eUseControl.Domain.Models.Doctor;
 using Microsoft.AspNetCore.Mvc;
 
 namespace eUseControl.Api.Controllers;
@@ -7,19 +9,24 @@ namespace eUseControl.Api.Controllers;
 [ApiController]
 public class DoctorsController : ControllerBase
 {
-    private static readonly List<DoctorData> _doctors = new();
-    private static int _nextId = 1;
+    private readonly IDoctorAction _doctorAction;
+
+    public DoctorsController()
+    {
+        var bl = new BusinessLogic();
+        _doctorAction = bl.DoctorAction();
+    }
 
     [HttpGet]
-    public ActionResult<IEnumerable<DoctorData>> GetAll()
+    public ActionResult<List<DoctorDto>> GetAll()
     {
-        return Ok(_doctors);
+        return Ok(_doctorAction.GetAll());
     }
 
     [HttpGet("{id:int}")]
-    public ActionResult<DoctorData> GetById(int id)
+    public ActionResult<DoctorDto> GetById(int id)
     {
-        var doctor = _doctors.FirstOrDefault(d => d.Id == id);
+        var doctor = _doctorAction.GetById(id);
         if (doctor is null)
             return NotFound();
 
@@ -27,43 +34,35 @@ public class DoctorsController : ControllerBase
     }
 
     [HttpPost]
-    public ActionResult<DoctorData> Create([FromBody] DoctorData doctor)
+    public ActionResult<DoctorDto> Create([FromBody] DoctorDto dto)
     {
-        if (string.IsNullOrWhiteSpace(doctor.Name) || string.IsNullOrWhiteSpace(doctor.Specialty))
-            return BadRequest("Name and Specialty are required.");
+        var result = _doctorAction.Create(dto);
+        if (!result.IsSuccess)
+            return BadRequest(result.Message);
 
-        doctor.Id = _nextId++;
-        _doctors.Add(doctor);
-
-        return CreatedAtAction(nameof(GetById), new { id = doctor.Id }, doctor);
+        return CreatedAtAction(nameof(GetById), new { id = result.Data!.Id }, result.Data);
     }
 
     [HttpPut("{id:int}")]
-    public ActionResult<DoctorData> Update(int id, [FromBody] DoctorData doctor)
+    public ActionResult<DoctorDto> Update(int id, [FromBody] DoctorDto dto)
     {
-        if (string.IsNullOrWhiteSpace(doctor.Name) || string.IsNullOrWhiteSpace(doctor.Specialty))
-            return BadRequest("Name and Specialty are required.");
-
-        var existing = _doctors.FirstOrDefault(d => d.Id == id);
-        if (existing is null)
+        if (_doctorAction.GetById(id) is null)
             return NotFound();
 
-        existing.Name = doctor.Name;
-        existing.Specialty = doctor.Specialty;
-        existing.Rating = doctor.Rating;
-        existing.Location = doctor.Location;
+        var result = _doctorAction.Update(id, dto);
+        if (!result.IsSuccess)
+            return BadRequest(result.Message);
 
-        return Ok(existing);
+        return Ok(result.Data);
     }
 
     [HttpDelete("{id:int}")]
     public IActionResult Delete(int id)
     {
-        var existing = _doctors.FirstOrDefault(d => d.Id == id);
-        if (existing is null)
+        if (_doctorAction.GetById(id) is null)
             return NotFound();
 
-        _doctors.Remove(existing);
+        _doctorAction.Delete(id);
         return NoContent();
     }
 }
