@@ -1,3 +1,20 @@
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+#root {
+    min-height: 100%;
+}
+
+
+
+
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
@@ -66,3 +83,20 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+
+* {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    overflow-x: hidden;
+}
+
+#root {
+    width: 100%;
+    overflow-x: hidden;
+}
+
