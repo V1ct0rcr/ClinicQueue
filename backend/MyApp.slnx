@@ -1,8 +1,6 @@
 <Solution>
-  <Folder Name="/backend/">
-    <Project Path="backend/eUseControl.BusinessLayer/eUseControl.BusinessLayer.csproj" />
-    <Project Path="backend/eUseControl.DataAccess/eUseControl.DataAccess.csproj" />
-    <Project Path="backend/eUseControl.Domain/eUseControl.Domain.csproj" />
-  </Folder>
-  <Project Path="backend/eUseControl.Api/eUseControl.Api.csproj" />
+  <Project Path="eUseControl.Api/eUseControl.Api.csproj" />
+  <Project Path="eUseControl.BusinessLayer/eUseControl.BusinessLayer.csproj" />
+  <Project Path="eUseControl.DataAccess/eUseControl.DataAccess.csproj" />
+  <Project Path="eUseControl.Domain/eUseControl.Domain.csproj" />
 </Solution>
