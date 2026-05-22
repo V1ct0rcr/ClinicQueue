@@ -12,4 +12,9 @@ public class BusinessLogic
     public IPatientAction PatientAction() => new PatientActionExecution();
 
     public IAppointmentAction AppointmentAction() => new AppointmentActionExecution();
+
+    // Etapa 5 - Auth & RBAC
+    public IUserLoginAction UserLoginAction() => new UserAuthAction();
+
+    public IUserRegAction UserRegAction() => new UserRegActionExecution();
 }

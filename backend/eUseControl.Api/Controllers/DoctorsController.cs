@@ -1,6 +1,7 @@
 using eUseControl.BusinessLayer;
 using eUseControl.BusinessLayer.Interfaces;
 using eUseControl.Domain.Models.Doctor;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace eUseControl.Api.Controllers;
@@ -18,12 +19,14 @@ public class DoctorsController : ControllerBase
     }
 
     [HttpGet]
+    [AllowAnonymous]
     public ActionResult<List<DoctorDto>> GetAll()
     {
         return Ok(_doctorAction.GetAll());
     }
 
     [HttpGet("{id:int}")]
+    [AllowAnonymous]
     public ActionResult<DoctorDto> GetById(int id)
     {
         var doctor = _doctorAction.GetById(id);
@@ -34,6 +37,7 @@ public class DoctorsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = "Admin")]
     public ActionResult<DoctorDto> Create([FromBody] DoctorDto dto)
     {
         var result = _doctorAction.Create(dto);
@@ -44,6 +48,7 @@ public class DoctorsController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
+    [Authorize(Roles = "Admin")]
     public ActionResult<DoctorDto> Update(int id, [FromBody] DoctorDto dto)
     {
         if (_doctorAction.GetById(id) is null)
@@ -57,6 +62,7 @@ public class DoctorsController : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Admin")]
     public IActionResult Delete(int id)
     {
         if (_doctorAction.GetById(id) is null)

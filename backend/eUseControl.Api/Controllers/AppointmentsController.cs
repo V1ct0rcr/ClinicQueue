@@ -1,6 +1,7 @@
 using eUseControl.BusinessLayer;
 using eUseControl.BusinessLayer.Interfaces;
 using eUseControl.Domain.Models.Appointment;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace eUseControl.Api.Controllers;
@@ -18,12 +19,14 @@ public class AppointmentsController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize]
     public ActionResult<List<AppointmentDto>> GetAll()
     {
         return Ok(_appointmentAction.GetAll());
     }
 
     [HttpGet("{id:int}")]
+    [Authorize]
     public ActionResult<AppointmentDto> GetById(int id)
     {
         var appointment = _appointmentAction.GetById(id);
@@ -34,6 +37,7 @@ public class AppointmentsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize]
     public ActionResult<AppointmentDto> Create([FromBody] AppointmentDto dto)
     {
         var result = _appointmentAction.Create(dto);
@@ -44,6 +48,7 @@ public class AppointmentsController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
+    [Authorize(Roles = "Admin")]
     public ActionResult<AppointmentDto> Update(int id, [FromBody] AppointmentDto dto)
     {
         if (_appointmentAction.GetById(id) is null)
@@ -57,6 +62,7 @@ public class AppointmentsController : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Admin")]
     public IActionResult Delete(int id)
     {
         if (_appointmentAction.GetById(id) is null)

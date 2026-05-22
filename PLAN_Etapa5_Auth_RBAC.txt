@@ -1,0 +1,750 @@
+================================================================================
+ PLAN DETALIAT - ETAPA 5: AUTH & RBAC (JWT)
+ Proiect: ClinicQueue
+ Backend: ClinicQueue-mono\backend\
+ Surse: Autorizare_si_RBAC.pdf + checkpoint eBookStore (RBAC + AUTH)
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+ 0. OBIECTIV (ce vrem la final de Etapa 5)
+────────────────────────────────────────────────────────────────────────────────
+ - Entitate UserData + enum UserRole (User, Admin) in Domain
+ - Tabel Users in SQL Server (migratie noua)
+ - Register: POST /api/reg  -> creaza cont cu parola hashata
+ - Login:    POST /api/session/auth  -> returneaza JWT token
+ - JWT verificat automat de middleware la fiecare request
+ - [Authorize] pe endpoint-urile care cer autentificare
+ - Swagger configurat cu butonul "Authorize" pentru testare cu token
+
+ Matricea permisiunilor ClinicQueue:
+   Endpoint                  Public  User   Admin
+   GET /api/doctors            DA     DA      DA
+   POST /api/doctors           NU     NU      DA
+   PUT /api/doctors/{id}       NU     NU      DA
+   DELETE /api/doctors/{id}    NU     NU      DA
+   GET /api/patients           NU     NU      DA
+   POST /api/patients          DA     DA      DA   (inregistrare pacient)
+   PUT /api/patients/{id}      NU     NU      DA
+   DELETE /api/patients/{id}   NU     NU      DA
+   GET /api/appointments       NU     DA      DA
+   POST /api/appointments      NU     DA      DA
+   PUT /api/appointments/{id}  NU     NU      DA
+   DELETE /api/appointments/{id} NU   NU      DA
+   POST /api/reg               DA     --      --   [AllowAnonymous]
+   POST /api/session/auth      DA     --      --   [AllowAnonymous]
+
+────────────────────────────────────────────────────────────────────────────────
+ 1. PACHET NuGet (1 pachet nou)
+────────────────────────────────────────────────────────────────────────────────
+ In Visual Studio -> eUseControl.Api.csproj -> Manage NuGet Packages
+ SAU in terminal din folderul eUseControl.Api:
+
+   dotnet add package Microsoft.AspNetCore.Authentication.JwtBearer
+
+ eUseControl.BusinessLayer.csproj are nevoie de:
+   dotnet add package Microsoft.IdentityModel.Tokens
+   dotnet add package System.IdentityModel.Tokens.Jwt
+
+ VERIFICARE: Build (Ctrl+Shift+B) trebuie sa treaca fara erori.
+
+────────────────────────────────────────────────────────────────────────────────
+ 2. DOMAIN - Entitate UserData + enum UserRole
+────────────────────────────────────────────────────────────────────────────────
+ Creeaza folderul: eUseControl.Domain\Entities\User\
+
+ FISIER: eUseControl.Domain\Entities\User\UserRole.cs
+ ─────────────────────────────────────────────────────
+namespace eUseControl.Domain.Entities.User;
+
+public enum UserRole
+{
+    User = 1,
+    Admin = 30
+}
+
+ FISIER: eUseControl.Domain\Entities\User\UserData.cs
+ ─────────────────────────────────────────────────────
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace eUseControl.Domain.Entities.User;
+
+public class UserData
+{
+    [Key]
+    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+    public int Id { get; set; }
+
+    [StringLength(30)]
+    public string FirstName { get; set; } = string.Empty;
+
+    [StringLength(30)]
+    public string LastName { get; set; } = string.Empty;
+
+    [Required]
+    [StringLength(30, MinimumLength = 4)]
+    public string UserName { get; set; } = string.Empty;
+
+    [Required]
+    [StringLength(100)]
+    public string Email { get; set; } = string.Empty;
+
+    [Required]
+    [StringLength(48)]
+    public string Password { get; set; } = string.Empty;
+
+    [StringLength(15)]
+    public string Phone { get; set; } = string.Empty;
+
+    public UserRole Role { get; set; }
+
+    public DateTime RegisteredOn { get; set; }
+}
+
+ Creeaza folderele: eUseControl.Domain\Models\User\
+
+ FISIER: eUseControl.Domain\Models\User\UserLoginDto.cs
+ ────────────────────────────────────────────────────────
+namespace eUseControl.Domain.Models.User;
+
+public class UserLoginDto
+{
+    public string CredentialType { get; set; } = string.Empty;  // username sau email
+    public string Password { get; set; } = string.Empty;
+}
+
+ FISIER: eUseControl.Domain\Models\User\UserRegisterDto.cs
+ ─────────────────────────────────────────────────────────
+namespace eUseControl.Domain.Models.User;
+
+public class UserRegisterDto
+{
+    public string FirstName { get; set; } = string.Empty;
+    public string LastName { get; set; } = string.Empty;
+    public string UserName { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
+    public string Phone { get; set; } = string.Empty;
+}
+
+────────────────────────────────────────────────────────────────────────────────
+ 3. DATA ACCESS - UserContext + migratie
+────────────────────────────────────────────────────────────────────────────────
+ FISIER: eUseControl.DataAccess\Context\UserContext.cs
+ ──────────────────────────────────────────────────────
+using eUseControl.Domain.Entities.User;
+using Microsoft.EntityFrameworkCore;
+
+namespace eUseControl.DataAccess.Context;
+
+public class UserContext : DbContext
+{
+    public DbSet<UserData> Users { get; set; } = null!;
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.UseSqlServer(DbSession.ConnectionString);
+    }
+}
+
+ MIGRATIE NOUA:
+ In Package Manager Console (cu proiectul Default = eUseControl.DataAccess):
+
+   Add-Migration AddUsersTable -Context UserContext
+   Update-Database -Context UserContext
+
+ SAU in terminal din folderul eUseControl.DataAccess:
+   dotnet ef migrations add AddUsersTable --context UserContext
+   dotnet ef database update --context UserContext
+
+ VERIFICARE: In SQL Server Management Studio, baza ClinicQueueDb trebuie
+ sa aiba acum si tabela "Users".
+
+────────────────────────────────────────────────────────────────────────────────
+ 4. BUSINESS LAYER - JwtSettings + TokenService + PasswordHasher
+────────────────────────────────────────────────────────────────────────────────
+ Toate in eUseControl.BusinessLayer\Structure\ (langa celelalte *Execution.cs)
+
+ FISIER: eUseControl.BusinessLayer\Structure\JwtSettings.cs
+ ──────────────────────────────────────────────────────────
+namespace eUseControl.BusinessLayer.Structure;
+
+public static class JwtSettings
+{
+    public const string Issuer = "ClinicQueueApi";
+    public const string Audience = "ClinicQueueClients";
+    public const string SecretKey = "clinicqueue_2026_super_secret_min_32_chars!";
+    public const int ExpireMinutes = 60;
+}
+
+ FISIER: eUseControl.BusinessLayer\Structure\PasswordHasher.cs
+ ─────────────────────────────────────────────────────────────
+using System.Security.Cryptography;
+using System.Text;
+
+namespace eUseControl.BusinessLayer.Structure;
+
+public static class PasswordHasher
+{
+    private const string PasswordSuffix = "clinicqueue_2026";
+
+    public static string Hash(string password)
+    {
+        var input = password + PasswordSuffix;
+        var bytes = Encoding.UTF8.GetBytes(input);
+        var hashBytes = MD5.HashData(bytes);
+
+        var sb = new StringBuilder();
+        foreach (var b in hashBytes)
+            sb.Append(b.ToString("x2"));
+
+        return sb.ToString();
+    }
+}
+
+ FISIER: eUseControl.BusinessLayer\Structure\TokenService.cs
+ ────────────────────────────────────────────────────────────
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+
+namespace eUseControl.BusinessLayer.Structure;
+
+public class TokenService
+{
+    public string GenerateToken(int userId, string userName, string role)
+    {
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(JwtSettings.SecretKey));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
+            new Claim(ClaimTypes.Name, userName),
+            new Claim(ClaimTypes.Role, role)
+        };
+
+        var token = new JwtSecurityToken(
+            issuer: JwtSettings.Issuer,
+            audience: JwtSettings.Audience,
+            claims: claims,
+            expires: DateTime.UtcNow.AddMinutes(JwtSettings.ExpireMinutes),
+            signingCredentials: creds);
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+}
+
+────────────────────────────────────────────────────────────────────────────────
+ 5. BUSINESS LAYER - Interfaces pentru User
+────────────────────────────────────────────────────────────────────────────────
+ FISIER: eUseControl.BusinessLayer\Interfaces\IUserLoginAction.cs
+ ────────────────────────────────────────────────────────────────
+using eUseControl.Domain.Models.Responses;
+using eUseControl.Domain.Models.User;
+
+namespace eUseControl.BusinessLayer.Interfaces;
+
+public interface IUserLoginAction
+{
+    ActionResponse UserLoginDataValidation(UserLoginDto udata);
+}
+
+ FISIER: eUseControl.BusinessLayer\Interfaces\IUserRegAction.cs
+ ──────────────────────────────────────────────────────────────
+using eUseControl.Domain.Models.Responses;
+using eUseControl.Domain.Models.User;
+
+namespace eUseControl.BusinessLayer.Interfaces;
+
+public interface IUserRegAction
+{
+    ActionResponse UserRegDataValidation(UserRegisterDto uReg);
+}
+
+────────────────────────────────────────────────────────────────────────────────
+ 6. BUSINESS LAYER - Core\UserActions.cs (logica reala)
+────────────────────────────────────────────────────────────────────────────────
+ FISIER: eUseControl.BusinessLayer\Core\UserActions.cs
+ ──────────────────────────────────────────────────────
+using eUseControl.BusinessLayer.Structure;
+using eUseControl.DataAccess.Context;
+using eUseControl.Domain.Entities.User;
+using eUseControl.Domain.Models.Responses;
+using eUseControl.Domain.Models.User;
+
+namespace eUseControl.BusinessLayer.Core;
+
+public class UserActions
+{
+    internal UserData? UserLoginDataValidationExecution(UserLoginDto udata)
+    {
+        var passwordHash = PasswordHasher.Hash(udata.Password);
+
+        using var db = new UserContext();
+        return db.Users.FirstOrDefault(x =>
+            (x.UserName == udata.CredentialType || x.Email == udata.CredentialType) &&
+            x.Password == passwordHash);
+    }
+
+    internal string UserTokenGeneration(UserData user)
+    {
+        var token = new TokenService();
+        return token.GenerateToken(user.Id, user.UserName, user.Role.ToString());
+    }
+
+    internal ActionResponse UserRegDataValidationAction(UserRegisterDto uReg)
+    {
+        if (string.IsNullOrWhiteSpace(uReg.UserName) ||
+            string.IsNullOrWhiteSpace(uReg.Email) ||
+            string.IsNullOrWhiteSpace(uReg.Password))
+        {
+            return new ActionResponse { IsSuccess = false, Message = "Username, Email and Password are required." };
+        }
+
+        using var db = new UserContext();
+        var exists = db.Users.FirstOrDefault(x =>
+            x.Email == uReg.Email || x.UserName == uReg.UserName);
+
+        if (exists is not null)
+            return new ActionResponse { IsSuccess = false, Message = "Email or username already exists." };
+
+        var user = new UserData
+        {
+            FirstName = uReg.FirstName,
+            LastName = uReg.LastName,
+            Email = uReg.Email,
+            UserName = uReg.UserName,
+            Password = PasswordHasher.Hash(uReg.Password),
+            Phone = uReg.Phone,
+            Role = UserRole.User,
+            RegisteredOn = DateTime.Now
+        };
+
+        db.Users.Add(user);
+        db.SaveChanges();
+
+        return new ActionResponse { IsSuccess = true, Message = "Registration successful." };
+    }
+}
+
+────────────────────────────────────────────────────────────────────────────────
+ 7. BUSINESS LAYER - Structure - UserAuthAction + UserRegActionExecution
+────────────────────────────────────────────────────────────────────────────────
+ FISIER: eUseControl.BusinessLayer\Structure\UserAuthAction.cs
+ ─────────────────────────────────────────────────────────────
+using eUseControl.BusinessLayer.Core;
+using eUseControl.BusinessLayer.Interfaces;
+using eUseControl.Domain.Models.Responses;
+using eUseControl.Domain.Models.User;
+
+namespace eUseControl.BusinessLayer.Structure;
+
+public class UserAuthAction : UserActions, IUserLoginAction
+{
+    public ActionResponse UserLoginDataValidation(UserLoginDto udata)
+    {
+        var user = UserLoginDataValidationExecution(udata);
+        if (user is null)
+            return new ActionResponse { IsSuccess = false, Message = "Invalid username or password." };
+
+        var token = UserTokenGeneration(user);
+        return new ActionResponse { IsSuccess = true, Message = token };
+    }
+}
+
+ FISIER: eUseControl.BusinessLayer\Structure\UserRegActionExecution.cs
+ ─────────────────────────────────────────────────────────────────────
+using eUseControl.BusinessLayer.Core;
+using eUseControl.BusinessLayer.Interfaces;
+using eUseControl.Domain.Models.Responses;
+using eUseControl.Domain.Models.User;
+
+namespace eUseControl.BusinessLayer.Structure;
+
+public class UserRegActionExecution : UserActions, IUserRegAction
+{
+    public ActionResponse UserRegDataValidation(UserRegisterDto uReg)
+    {
+        return UserRegDataValidationAction(uReg);
+    }
+}
+
+────────────────────────────────────────────────────────────────────────────────
+ 8. BUSINESS LAYER - Actualizeaza BusinessLogic.cs
+────────────────────────────────────────────────────────────────────────────────
+ Deschide eUseControl.BusinessLayer\BusinessLogic.cs si ADAUGA cele 2 metode noi
+ (pastreaza DoctorAction, PatientAction, AppointmentAction existente):
+
+using eUseControl.BusinessLayer.Interfaces;
+using eUseControl.BusinessLayer.Structure;
+
+namespace eUseControl.BusinessLayer;
+
+public class BusinessLogic
+{
+    public BusinessLogic() { }
+
+    public IDoctorAction DoctorAction() => new DoctorActionExecution();
+    public IPatientAction PatientAction() => new PatientActionExecution();
+    public IAppointmentAction AppointmentAction() => new AppointmentActionExecution();
+
+    // NOU - Etapa 5
+    public IUserLoginAction UserLoginAction() => new UserAuthAction();
+    public IUserRegAction UserRegAction() => new UserRegActionExecution();
+}
+
+────────────────────────────────────────────────────────────────────────────────
+ 9. API - AuthController + RegisterController
+────────────────────────────────────────────────────────────────────────────────
+ FISIER: eUseControl.Api\Controllers\AuthController.cs
+ ──────────────────────────────────────────────────────
+using eUseControl.BusinessLayer;
+using eUseControl.BusinessLayer.Interfaces;
+using eUseControl.Domain.Models.User;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace eUseControl.Api.Controllers;
+
+[Route("api/session")]
+[ApiController]
+public class AuthController : ControllerBase
+{
+    private readonly IUserLoginAction _userAction;
+
+    public AuthController()
+    {
+        var bl = new BusinessLogic();
+        _userAction = bl.UserLoginAction();
+    }
+
+    [HttpPost("auth")]
+    [AllowAnonymous]
+    public IActionResult Auth([FromBody] UserLoginDto udata)
+    {
+        var result = _userAction.UserLoginDataValidation(udata);
+
+        if (!result.IsSuccess)
+            return Unauthorized(result.Message);
+
+        return Ok(new { token = result.Message });
+    }
+}
+
+ FISIER: eUseControl.Api\Controllers\RegisterController.cs
+ ─────────────────────────────────────────────────────────
+using eUseControl.BusinessLayer;
+using eUseControl.BusinessLayer.Interfaces;
+using eUseControl.Domain.Models.User;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace eUseControl.Api.Controllers;
+
+[Route("api/reg")]
+[ApiController]
+public class RegisterController : ControllerBase
+{
+    private readonly IUserRegAction _userReg;
+
+    public RegisterController()
+    {
+        var bl = new BusinessLogic();
+        _userReg = bl.UserRegAction();
+    }
+
+    [HttpPost]
+    [AllowAnonymous]
+    public IActionResult Register([FromBody] UserRegisterDto uRegData)
+    {
+        var result = _userReg.UserRegDataValidation(uRegData);
+
+        if (!result.IsSuccess)
+            return BadRequest(result.Message);
+
+        return Ok(result.Message);
+    }
+}
+
+────────────────────────────────────────────────────────────────────────────────
+ 10. API - Actualizeaza Program.cs (JWT middleware + Swagger Bearer)
+────────────────────────────────────────────────────────────────────────────────
+ INLOCUIESTE complet continutul Program.cs cu:
+
+using eUseControl.BusinessLayer.Structure;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using System.Security.Claims;
+using System.Text;
+
+var builder = WebApplication.CreateBuilder(args);
+
+eUseControl.DataAccess.DbSession.ConnectionString =
+    builder.Configuration.GetConnectionString("DefaultConnection");
+
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+
+// Swagger cu buton "Authorize" pentru JWT
+builder.Services.AddSwaggerGen(c =>
+{
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "Bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Introdu token-ul JWT primit la POST /api/session/auth."
+    });
+
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
+
+// Autentificare JWT Bearer
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = JwtSettings.Issuer,
+            ValidAudience = JwtSettings.Audience,
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(JwtSettings.SecretKey)),
+            NameClaimType = ClaimTypes.Name,
+            RoleClaimType = ClaimTypes.Role
+        };
+    });
+
+builder.Services.AddAuthorization();
+
+var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseHttpsRedirection();
+
+// ORDINEA CONTEAZA: Authentication INAINTE de Authorization
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers();
+
+app.Run();
+
+────────────────────────────────────────────────────────────────────────────────
+ 11. API - Adauga [Authorize] pe controllere existente
+────────────────────────────────────────────────────────────────────────────────
+ Deschide fiecare controller si adauga atributele conform matricei de permisiuni.
+ NU sterge nimic din cod — doar adaugi using + atribute.
+
+ A) DoctorsController.cs — adauga using + atribute:
+ ────────────────────────────────────────────────────
+ using Microsoft.AspNetCore.Authorization;   // <-- adauga in sus
+
+ [HttpGet]
+ [AllowAnonymous]          // <-- public: oricine vede lista doctorilor
+ public ActionResult<List<DoctorDto>> GetAll() { ... }
+
+ [HttpGet("{id:int}")]
+ [AllowAnonymous]          // <-- public
+ public ActionResult<DoctorDto> GetById(int id) { ... }
+
+ [HttpPost]
+ [Authorize(Roles = "Admin")]    // <-- doar Admin adauga doctori
+ public ActionResult<DoctorDto> Create([FromBody] DoctorDto dto) { ... }
+
+ [HttpPut("{id:int}")]
+ [Authorize(Roles = "Admin")]
+ public ActionResult<DoctorDto> Update(int id, [FromBody] DoctorDto dto) { ... }
+
+ [HttpDelete("{id:int}")]
+ [Authorize(Roles = "Admin")]
+ public IActionResult Delete(int id) { ... }
+
+ B) PatientsController.cs:
+ ──────────────────────────
+ [HttpGet]
+ [Authorize(Roles = "Admin")]    // date sensibile - doar Admin
+
+ [HttpGet("{id:int}")]
+ [Authorize(Roles = "Admin")]
+
+ [HttpPost]
+ [AllowAnonymous]                // inregistrare pacient = public
+
+ [HttpPut("{id:int}")]
+ [Authorize(Roles = "Admin")]
+
+ [HttpDelete("{id:int}")]
+ [Authorize(Roles = "Admin")]
+
+ C) AppointmentsController.cs:
+ ───────────────────────────────
+ [HttpGet]
+ [Authorize]                     // orice user autentificat
+
+ [HttpGet("{id:int}")]
+ [Authorize]
+
+ [HttpPost]
+ [Authorize]                     // User sau Admin pot face programare
+
+ [HttpPut("{id:int}")]
+ [Authorize(Roles = "Admin")]
+
+ [HttpDelete("{id:int}")]
+ [Authorize(Roles = "Admin")]
+
+ D) HealthController.cs:
+ ─────────────────────────
+ [HttpGet("ping")]
+ [AllowAnonymous]               // endpoint de test - public
+
+────────────────────────────────────────────────────────────────────────────────
+ 12. appsettings.example.json - adauga sectiunea Jwt
+────────────────────────────────────────────────────────────────────────────────
+ Deschide eUseControl.Api\appsettings.example.json si adauga:
+
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=...;Database=ClinicQueueDb;Trusted_Connection=True;TrustServerCertificate=True"
+  },
+  "Jwt": {
+    "Issuer": "ClinicQueueApi",
+    "Audience": "ClinicQueueClients",
+    "Key": "clinicqueue_2026_super_secret_min_32_chars!",
+    "ExpireMinutes": 60
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*"
+}
+
+ NOTA: JwtSettings.cs hardcodeaza valorile (ca in eBookStore). Appsettings.example.json
+ e doar documentatie. Valorile reale sunt in JwtSettings.cs.
+
+────────────────────────────────────────────────────────────────────────────────
+ 13. SANITY CHECK - cum testezi in Swagger
+────────────────────────────────────────────────────────────────────────────────
+ A) Build: Ctrl+Shift+B -> 0 erori
+ B) Run: F5 -> Swagger se deschide
+ C) Swagger trebuie sa aiba butonul "Authorize" sus-dreapta
+
+ TEST 1 - Register (fara token):
+   POST /api/reg
+   {
+     "firstName": "Ion",
+     "lastName": "Popescu",
+     "userName": "ion.popescu",
+     "email": "ion@test.com",
+     "password": "Parola123!",
+     "phone": "0740000000"
+   }
+   Asteptat: 200 OK "Registration successful."
+
+ TEST 2 - Login:
+   POST /api/session/auth
+   {
+     "credentialType": "ion.popescu",
+     "password": "Parola123!"
+   }
+   Asteptat: 200 OK { "token": "eyJhbGci..." }
+   Copiaza token-ul!
+
+ TEST 3 - Autorizeaza in Swagger:
+   Click "Authorize" (sus-dreapta) -> Value: "Bearer eyJhbGci..."
+   -> Authorize -> Close
+
+ TEST 4 - Endpoint protejat (fara token):
+   DELETE /api/doctors/1 (fara a autoriza)
+   Asteptat: 401 Unauthorized
+
+ TEST 5 - Endpoint protejat (cu token de User, nu Admin):
+   (Inregistreaza un user normal, fa login, ia token-ul)
+   DELETE /api/doctors/1
+   Asteptat: 403 Forbidden (are token, dar nu e Admin)
+
+ TEST 6 - Creeaza un user Admin direct in SQL (o singura data, pentru teste):
+   UPDATE Users SET Role = 30 WHERE UserName = 'ion.popescu'
+   (30 = Admin in enum-ul nostru)
+   Fa login din nou (token nou cu rol Admin) -> DELETE /api/doctors/1
+   Asteptat: 204 NoContent (sau 404 daca id-ul nu exista)
+
+────────────────────────────────────────────────────────────────────────────────
+ PROBLEME COMUNE
+────────────────────────────────────────────────────────────────────────────────
+ X "Unable to resolve service for type ITokenService"
+   -> TokenService nu e inregistrat in DI. La noi nu folosim DI - il instantiem
+      direct in UserActions.cs (new TokenService()). Corect daca urmaresti planul.
+
+ X 401 pe toate endpoint-urile (chiar si GET public)
+   -> Ai uitat [AllowAnonymous] pe metodele publice.
+   -> Sau app.UseAuthentication() e dupa app.UseAuthorization() in Program.cs.
+      Ordinea corecta: UseAuthentication() INAINTE de UseAuthorization().
+
+ X 500 la Register/Login
+   -> Verifica ca migrarea a rulat: tabela Users exista in SQL Server.
+   -> Verifica connection string-ul in appsettings.json (cel real, nu example).
+
+ X "Bad signature 0x00000000" la migratie
+   -> Inchide Visual Studio, sterge fisierul index.lock din .git/, redeschide.
+
+ X Token expirat dupa 60 minute -> 401
+   -> Normal. Fa login din nou pentru un token proaspat.
+      In productie: refresh tokens. La noi pentru laborator: ExpireMinutes = 480 (8h).
+
+================================================================================
+ CHECKLIST FINAL ETAPA 5
+================================================================================
+ [ ] 1. Pachet NuGet: Microsoft.AspNetCore.Authentication.JwtBearer instalat
+ [ ] 2. UserRole.cs + UserData.cs create in Domain/Entities/User/
+ [ ] 3. UserLoginDto.cs + UserRegisterDto.cs create in Domain/Models/User/
+ [ ] 4. UserContext.cs creat in DataAccess/Context/
+ [ ] 5. Migratie AddUsersTable rulata, tabela Users exista in SQL Server
+ [ ] 6. JwtSettings.cs + PasswordHasher.cs + TokenService.cs in BusinessLayer/Structure/
+ [ ] 7. IUserLoginAction.cs + IUserRegAction.cs in BusinessLayer/Interfaces/
+ [ ] 8. UserActions.cs in BusinessLayer/Core/
+ [ ] 9. UserAuthAction.cs + UserRegActionExecution.cs in BusinessLayer/Structure/
+ [ ] 10. BusinessLogic.cs actualizat cu UserLoginAction() si UserRegAction()
+ [ ] 11. AuthController.cs + RegisterController.cs create in Api/Controllers/
+ [ ] 12. Program.cs actualizat cu JWT middleware + Swagger Bearer
+ [ ] 13. [Authorize]/[AllowAnonymous] adaugate pe toate cele 4 controllere
+ [ ] 14. appsettings.example.json actualizat cu sectiunea Jwt
+ [ ] 15. Build 0 erori, Swagger are butonul "Authorize"
+ [ ] 16. Register -> Login -> token -> endpoint protejat = 200 OK
+ [ ] 17. Fara token -> 401 / cu token de User pe endpoint Admin -> 403
+
+ Timp estimat: ~3h - 3h30min
+
+================================================================================
+ END OF PLAN - ETAPA 5
+================================================================================

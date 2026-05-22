@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace eUseControl.Api.Controllers;
@@ -7,6 +8,7 @@ namespace eUseControl.Api.Controllers;
 public class HealthController : ControllerBase
 {
     [HttpGet("ping")]
+    [AllowAnonymous]
     public IActionResult Ping()
     {
         return Ok("pong");
