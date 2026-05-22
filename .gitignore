@@ -1,0 +1,23 @@
+# ===== .NET =====
+**/bin/
+**/obj/
+**/*.user
+appsettings.json
+appsettings.Development.json
+!appsettings.example.json
+
+# ===== Node / React =====
+node_modules/
+dist/
+.cache/
+
+# ===== Visual Studio =====
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
