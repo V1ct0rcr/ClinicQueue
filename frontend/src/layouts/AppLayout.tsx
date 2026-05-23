@@ -72,7 +72,7 @@ export function AppLayout() {
         };
     }, []);
 
-    const isAdmin = useMemo(() => user?.role === "admin", [user]);
+    const isAdmin = useMemo(() => user?.role === "Admin", [user]);
 
     function onLogout() {
         logout();

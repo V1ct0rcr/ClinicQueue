@@ -1,0 +1,1147 @@
+================================================================
+  PLAN ETAPA 7 — BOOTSTRAP + FINALIZARE FRONTEND
+  Bazat pe: cerințele prof. Musteată + reguli React
+  Data: mai 2026
+================================================================
+
+PROBLEME DE REZOLVAT:
+  1. Nu există UI framework (toate inline styles) — prof cere Bootstrap/Tailwind/etc.
+  2. BookAppointmentPage folosește useState+onChange pe toate câmpurile (INTERZIS)
+  3. ContactPage folosește useState+onChange pe toate câmpurile (INTERZIS)
+  4. Nu există pagină de Register (/register) — backend-ul are POST /api/reg
+  5. AdminDashboardPage afișează "(mock)" și listă statică
+  6. HomePage are text vechi cu "mock"
+  7. App.css și index.css conțin stiluri default Vite care interferează
+
+FIȘIERE MODIFICATE ÎN ACEASTĂ ETAPĂ:
+  [N] frontend/src/pages/RegisterPage.tsx         → pagina nouă de înregistrare
+  [M] frontend/src/main.tsx                       → import Bootstrap CSS + ruta /register
+  [M] frontend/src/layouts/AppLayout.tsx          → Navbar Bootstrap + link Register
+  [M] frontend/src/pages/HomePage.tsx             → Bootstrap cards
+  [M] frontend/src/pages/DoctorsPage.tsx          → Bootstrap grid
+  [M] frontend/src/components/DoctorCard.tsx      → Bootstrap Card
+  [M] frontend/src/pages/AppointmentsPage.tsx     → Bootstrap list
+  [M] frontend/src/components/AppointmentCard.tsx → Bootstrap Card
+  [M] frontend/src/pages/BookAppointmentPage.tsx  → useRef + Bootstrap Form
+  [M] frontend/src/pages/ContactPage.tsx          → useRef + Bootstrap Form
+  [M] frontend/src/pages/LoginPage.tsx            → Bootstrap Form (păstrăm useRef)
+  [M] frontend/src/pages/AdminDashboardPage.tsx   → date reale + Bootstrap
+  [M] frontend/src/pages/ServerDownPage.tsx       → Bootstrap styling
+  [M] frontend/src/components/ProtectedRoute.tsx  → neschimbat logic, verificat
+  [C] frontend/src/App.css                        → GOLIT complet
+  [C] frontend/src/index.css                      → păstrăm doar resetul minim
+
+================================================================
+PAS 1 — INSTALEAZĂ REACT-BOOTSTRAP
+================================================================
+
+Terminal în folderul frontend/:
+
+  npm install react-bootstrap bootstrap
+
+Verifică că în package.json apar la "dependencies":
+  "bootstrap": "^5.x.x"
+  "react-bootstrap": "^2.x.x"
+
+================================================================
+PAS 2 — CURĂȚĂ App.css și index.css
+================================================================
+
+DE CE: Prof. spune "Șterge fișierele .css default când integrezi
+       un pachet UI (suprascriu stilurile)". App.css e Vite default
+       pur (logo-spin, .card clasa default etc.) și trebuie golit.
+
+FIȘIER: frontend/src/App.css
+ÎNLOCUIEȘTE tot conținutul cu:
+------------------------------------------------------------
+/* Bootstrap se importă din main.tsx */
+------------------------------------------------------------
+
+FIȘIER: frontend/src/index.css
+ÎNLOCUIEȘTE tot conținutul cu:
+------------------------------------------------------------
+/* Reset minimal — Bootstrap gestionează restul */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+#root {
+  min-height: 100%;
+}
+------------------------------------------------------------
+
+================================================================
+PAS 3 — ADAUGĂ BOOTSTRAP CSS ÎN main.tsx
+================================================================
+
+FIȘIER: frontend/src/main.tsx
+
+ADAUGĂ la începutul importurilor (prima linie, înainte de orice altceva):
+  import "bootstrap/dist/css/bootstrap.min.css";
+
+Și adaugă ruta /register în router.
+
+CONȚINUT COMPLET al main.tsx:
+------------------------------------------------------------
+import "bootstrap/dist/css/bootstrap.min.css";
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { createBrowserRouter, RouterProvider } from "react-router-dom";
+
+import { ApiProvider } from "./context/ApiContext";
+import { AppLayout } from "./layouts/AppLayout";
+import { HomePage } from "./pages/HomePage";
+import { DoctorsPage } from "./pages/DoctorsPage";
+import { BookAppointmentPage } from "./pages/BookAppointmentPage";
+import { AppointmentsPage } from "./pages/AppointmentsPage";
+import { ContactPage } from "./pages/ContactPage";
+import { LoginPage } from "./pages/LoginPage";
+import { RegisterPage } from "./pages/RegisterPage";
+import { AdminDashboardPage } from "./pages/AdminDashboardPage";
+import { ServerDownPage } from "./pages/ServerDownPage";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+
+import "./index.css";
+
+const router = createBrowserRouter([
+  {
+    path: "/500",
+    element: <ServerDownPage />,
+  },
+  {
+    element: (
+      <ApiProvider>
+        <AppLayout />
+      </ApiProvider>
+    ),
+    children: [
+      { path: "/", element: <HomePage /> },
+      { path: "/doctors", element: <DoctorsPage /> },
+      { path: "/book", element: <BookAppointmentPage /> },
+      { path: "/appointments", element: <AppointmentsPage /> },
+      { path: "/contact", element: <ContactPage /> },
+      { path: "/login", element: <LoginPage /> },
+      { path: "/register", element: <RegisterPage /> },
+      {
+        path: "/admin",
+        element: (
+          <ProtectedRoute requiredRole="Admin">
+            <AdminDashboardPage />
+          </ProtectedRoute>
+        ),
+      },
+    ],
+  },
+]);
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <RouterProvider router={router} />
+  </React.StrictMode>
+);
+------------------------------------------------------------
+
+================================================================
+PAS 4 — ACTUALIZEAZĂ AppLayout.tsx (Navbar Bootstrap)
+================================================================
+
+ȘTERGE tot conținutul și înlocuiește cu:
+
+------------------------------------------------------------
+import { useEffect, useMemo, useState } from "react";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { Container, Navbar, Nav, Badge } from "react-bootstrap";
+import { getUser, logout, type AuthUser } from "../services/auth";
+
+export function AppLayout() {
+  const navigate = useNavigate();
+  const [user, setUserState] = useState<AuthUser | null>(() => getUser());
+
+  useEffect(() => {
+    const sync = () => setUserState(getUser());
+    sync();
+    window.addEventListener("authchange", sync);
+    window.addEventListener("focus", sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener("authchange", sync);
+      window.removeEventListener("focus", sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
+
+  const isAdmin = useMemo(() => user?.role === "Admin", [user]);
+
+  function onLogout() {
+    logout();
+    setUserState(null);
+    navigate("/", { replace: true });
+  }
+
+  return (
+    <div className="min-vh-100 bg-light">
+      <Navbar bg="white" expand="md" className="border-bottom shadow-sm">
+        <Container>
+          <Navbar.Brand href="/" className="fw-bold">
+            ClinicQueue
+          </Navbar.Brand>
+          <Navbar.Toggle aria-controls="main-nav" />
+          <Navbar.Collapse id="main-nav">
+            <Nav className="me-auto">
+              <Nav.Link as={NavLink} to="/" end>Home</Nav.Link>
+              <Nav.Link as={NavLink} to="/doctors">Doctors</Nav.Link>
+              <Nav.Link as={NavLink} to="/book">Book</Nav.Link>
+              <Nav.Link as={NavLink} to="/appointments">Appointments</Nav.Link>
+              <Nav.Link as={NavLink} to="/contact">Contact</Nav.Link>
+              {isAdmin && (
+                <Nav.Link as={NavLink} to="/admin">Admin</Nav.Link>
+              )}
+            </Nav>
+
+            <Nav className="align-items-center gap-2">
+              {user ? (
+                <>
+                  <Badge bg="secondary" className="px-3 py-2">
+                    {user.username} ({user.role})
+                  </Badge>
+                  <button
+                    className="btn btn-outline-dark btn-sm"
+                    onClick={onLogout}
+                  >
+                    Logout
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Nav.Link as={NavLink} to="/login">Login</Nav.Link>
+                  <Nav.Link as={NavLink} to="/register">
+                    <button className="btn btn-dark btn-sm">Register</button>
+                  </Nav.Link>
+                </>
+              )}
+            </Nav>
+          </Navbar.Collapse>
+        </Container>
+      </Navbar>
+
+      <Container className="py-4">
+        <Outlet />
+      </Container>
+
+      <footer className="bg-white border-top py-3 mt-auto">
+        <Container>
+          <small className="text-muted">
+            © {new Date().getFullYear()} ClinicQueue
+          </small>
+        </Container>
+      </footer>
+    </div>
+  );
+}
+------------------------------------------------------------
+
+================================================================
+PAS 5 — ACTUALIZEAZĂ HomePage.tsx
+================================================================
+
+------------------------------------------------------------
+import { Link } from "react-router-dom";
+import { Card, Col, Row, Button } from "react-bootstrap";
+
+export function HomePage() {
+  return (
+    <div>
+      <h1 className="fw-bold mb-2">Bine ai venit la ClinicQueue</h1>
+      <p className="text-muted mb-4">
+        Platformă pentru programări medicale. Găsești doctori, faci programări
+        și îți urmărești istoricul.
+      </p>
+
+      <Row xs={1} md={2} lg={3} className="g-3">
+        <Col>
+          <Card className="h-100 shadow-sm">
+            <Card.Body>
+              <Card.Title className="fw-bold">Doctori</Card.Title>
+              <Card.Text className="text-muted">
+                Explorează lista de doctori disponibili și specialitățile lor.
+              </Card.Text>
+              <Button as={Link as any} to="/doctors" variant="dark" size="sm">
+                Vezi doctorii
+              </Button>
+            </Card.Body>
+          </Card>
+        </Col>
+
+        <Col>
+          <Card className="h-100 shadow-sm">
+            <Card.Body>
+              <Card.Title className="fw-bold">Programare nouă</Card.Title>
+              <Card.Text className="text-muted">
+                Creează o programare la doctorul tău ales.
+              </Card.Text>
+              <Button as={Link as any} to="/book" variant="dark" size="sm">
+                Creează programare
+              </Button>
+            </Card.Body>
+          </Card>
+        </Col>
+
+        <Col>
+          <Card className="h-100 shadow-sm">
+            <Card.Body>
+              <Card.Title className="fw-bold">Programările mele</Card.Title>
+              <Card.Text className="text-muted">
+                Vezi și urmărește programările tale active.
+              </Card.Text>
+              <Button as={Link as any} to="/appointments" variant="outline-dark" size="sm">
+                Vezi programările
+              </Button>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+    </div>
+  );
+}
+------------------------------------------------------------
+
+================================================================
+PAS 6 — ACTUALIZEAZĂ DoctorCard.tsx (Bootstrap Card)
+================================================================
+
+------------------------------------------------------------
+import { Card, Badge } from "react-bootstrap";
+
+export type DoctorCardProps = {
+  id: number;
+  name: string;
+  specialty: string;
+  rating: number;
+  location: string;
+};
+
+export function DoctorCard({ name, specialty, rating, location }: DoctorCardProps) {
+  return (
+    <Card className="h-100 shadow-sm">
+      <Card.Body>
+        <Card.Title className="fw-bold">{name}</Card.Title>
+        <Card.Subtitle className="mb-2 text-muted">{specialty}</Card.Subtitle>
+        <div className="d-flex gap-2 flex-wrap mt-2">
+          <Badge bg="warning" text="dark">⭐ {rating}</Badge>
+          <Badge bg="light" text="dark" className="border">{location}</Badge>
+        </div>
+      </Card.Body>
+    </Card>
+  );
+}
+------------------------------------------------------------
+
+================================================================
+PAS 7 — ACTUALIZEAZĂ DoctorsPage.tsx
+================================================================
+
+------------------------------------------------------------
+import { useEffect, useState } from "react";
+import { Row, Col, Alert, Spinner } from "react-bootstrap";
+import { useApi } from "../context/ApiContext";
+import { DoctorCard, type DoctorCardProps } from "../components/DoctorCard";
+
+export function DoctorsPage() {
+  const api = useApi();
+  const [doctors, setDoctors] = useState<DoctorCardProps[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api
+      .get<DoctorCardProps[]>("/doctors")
+      .then((res) => setDoctors(res.data))
+      .catch(() => setError("Nu s-au putut încărca doctorii."))
+      .finally(() => setLoading(false));
+  }, [api]);
+
+  if (loading) return (
+    <div className="text-center py-5">
+      <Spinner animation="border" variant="dark" />
+    </div>
+  );
+
+  if (error) return <Alert variant="danger">{error}</Alert>;
+
+  if (doctors.length === 0) return (
+    <Alert variant="info">Nu există doctori înregistrați momentan.</Alert>
+  );
+
+  return (
+    <div>
+      <h1 className="fw-bold mb-4">Doctori</h1>
+      <Row xs={1} md={2} lg={3} className="g-3">
+        {doctors.map((doctor) => (
+          <Col key={doctor.id}>
+            <DoctorCard {...doctor} />
+          </Col>
+        ))}
+      </Row>
+    </div>
+  );
+}
+------------------------------------------------------------
+
+================================================================
+PAS 8 — ACTUALIZEAZĂ AppointmentCard.tsx (Bootstrap Card)
+================================================================
+
+------------------------------------------------------------
+import { Card, Badge } from "react-bootstrap";
+
+export type AppointmentCardProps = {
+  id: number;
+  patientId: number;
+  doctorId: number;
+  appointmentDate: string;
+  status: string;
+};
+
+export function AppointmentCard({
+  id,
+  patientId,
+  doctorId,
+  appointmentDate,
+  status,
+}: AppointmentCardProps) {
+  const badgeVariant =
+    status === "Pending" ? "warning" :
+    status === "Confirmed" ? "success" : "secondary";
+
+  return (
+    <Card className="shadow-sm mb-2">
+      <Card.Body className="d-flex justify-content-between align-items-start flex-wrap gap-2">
+        <div>
+          <div className="fw-bold">Programare #{id}</div>
+          <div className="text-muted small">
+            {new Date(appointmentDate).toLocaleDateString("ro-RO", {
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+            })}
+          </div>
+          <div className="text-muted small">
+            Doctor ID: {doctorId} | Pacient ID: {patientId}
+          </div>
+        </div>
+        <Badge bg={badgeVariant} text={badgeVariant === "warning" ? "dark" : undefined}>
+          {status}
+        </Badge>
+      </Card.Body>
+    </Card>
+  );
+}
+------------------------------------------------------------
+
+================================================================
+PAS 9 — ACTUALIZEAZĂ AppointmentsPage.tsx
+================================================================
+
+------------------------------------------------------------
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Alert, Spinner } from "react-bootstrap";
+import { useApi } from "../context/ApiContext";
+import { isAuthenticated } from "../services/auth";
+import {
+  AppointmentCard,
+  type AppointmentCardProps,
+} from "../components/AppointmentCard";
+
+export function AppointmentsPage() {
+  const api = useApi();
+  const navigate = useNavigate();
+  const [appointments, setAppointments] = useState<AppointmentCardProps[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      navigate("/login", { replace: true, state: { from: "/appointments" } });
+      return;
+    }
+
+    api
+      .get<AppointmentCardProps[]>("/appointments")
+      .then((res) => setAppointments(res.data))
+      .catch((err) => {
+        if (err.response?.status === 401) {
+          navigate("/login", { replace: true, state: { from: "/appointments" } });
+        } else {
+          setError("Nu s-au putut încărca programările.");
+        }
+      })
+      .finally(() => setLoading(false));
+  }, [api, navigate]);
+
+  if (loading) return (
+    <div className="text-center py-5">
+      <Spinner animation="border" variant="dark" />
+    </div>
+  );
+
+  if (error) return <Alert variant="danger">{error}</Alert>;
+
+  if (appointments.length === 0) return (
+    <Alert variant="info">Nu ai programări înregistrate.</Alert>
+  );
+
+  return (
+    <div>
+      <h1 className="fw-bold mb-4">Programările mele</h1>
+      {appointments.map((appointment) => (
+        <AppointmentCard key={appointment.id} {...appointment} />
+      ))}
+    </div>
+  );
+}
+------------------------------------------------------------
+
+================================================================
+PAS 10 — ÎNLOCUIEȘTE BookAppointmentPage.tsx
+         (useRef în loc de useState + onChange — REGULA PROF.)
+================================================================
+
+DE CE: Versiunea actuală are 4 useState cu onChange pe fiecare input.
+       Prof. interzice asta explicit. Folosim useRef (uncontrolled form).
+
+------------------------------------------------------------
+import { useRef, useState } from "react";
+import { Form, Button, Alert, Card } from "react-bootstrap";
+import { useApi } from "../context/ApiContext";
+import { isAuthenticated, getUser } from "../services/auth";
+
+export function BookAppointmentPage() {
+  const api = useApi();
+  const doctorIdRef = useRef<HTMLSelectElement>(null);
+  const dateRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError("");
+    setSuccess("");
+
+    const doctorId = Number(doctorIdRef.current?.value);
+    const appointmentDate = dateRef.current?.value;
+
+    if (!doctorId || !appointmentDate) {
+      setError("Completează toate câmpurile.");
+      return;
+    }
+
+    const user = getUser();
+    if (!user) {
+      setError("Trebuie să fii autentificat pentru a face o programare.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await api.post("/appointments", {
+        patientId: Number(user.userId),
+        doctorId,
+        appointmentDate,
+        status: "Pending",
+      });
+      setSuccess("Programare creată cu succes!");
+      e.currentTarget.reset();
+    } catch {
+      setError("Nu s-a putut crea programarea. Încearcă din nou.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!isAuthenticated()) {
+    return (
+      <Alert variant="warning">
+        Trebuie să fii{" "}
+        <Alert.Link href="/login">autentificat</Alert.Link> pentru a crea o
+        programare.
+      </Alert>
+    );
+  }
+
+  return (
+    <div>
+      <h1 className="fw-bold mb-4">Programare nouă</h1>
+
+      <Card className="shadow-sm" style={{ maxWidth: 520 }}>
+        <Card.Body>
+          <Form onSubmit={onSubmit}>
+            <Form.Group className="mb-3">
+              <Form.Label className="fw-semibold">Doctor</Form.Label>
+              <Form.Select ref={doctorIdRef} required>
+                <option value="">Alege un doctor...</option>
+                <option value="1">Doctor ID 1</option>
+                <option value="2">Doctor ID 2</option>
+                <option value="3">Doctor ID 3</option>
+              </Form.Select>
+              <Form.Text className="text-muted">
+                Lista se poate popula dinamic din /api/doctors.
+              </Form.Text>
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label className="fw-semibold">Data programării</Form.Label>
+              <Form.Control
+                ref={dateRef}
+                type="datetime-local"
+                required
+                min={new Date().toISOString().slice(0, 16)}
+              />
+            </Form.Group>
+
+            {error && <Alert variant="danger" className="py-2">{error}</Alert>}
+            {success && <Alert variant="success" className="py-2">{success}</Alert>}
+
+            <Button
+              type="submit"
+              variant="dark"
+              disabled={loading}
+              className="w-100"
+            >
+              {loading ? "Se trimite..." : "Creează programare"}
+            </Button>
+          </Form>
+        </Card.Body>
+      </Card>
+    </div>
+  );
+}
+------------------------------------------------------------
+
+NOTĂ: Selectul cu doctori e hardcodat cu ID-urile 1,2,3 pentru simplitate.
+      Dacă vrei să-l faci dinamic (fetch din /api/doctors), înlocuiește
+      secțiunea <option> cu un useEffect care populează un state cu doctorii.
+
+================================================================
+PAS 11 — ÎNLOCUIEȘTE ContactPage.tsx (useRef în loc de useState)
+================================================================
+
+------------------------------------------------------------
+import { useRef, useState } from "react";
+import { Form, Button, Alert, Card, Row, Col } from "react-bootstrap";
+
+export function ContactPage() {
+  const nameRef = useRef<HTMLInputElement>(null);
+  const messageRef = useRef<HTMLTextAreaElement>(null);
+  const [sent, setSent] = useState(false);
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setSent(true);
+  }
+
+  return (
+    <div>
+      <h1 className="fw-bold mb-4">Contact</h1>
+
+      <Row className="g-3">
+        <Col md={5}>
+          <Card className="h-100 shadow-sm">
+            <Card.Body>
+              <Card.Title className="fw-bold">Date clinică</Card.Title>
+              <ul className="list-unstyled text-muted mt-3">
+                <li className="mb-2">📞 +373 00 000 000</li>
+                <li className="mb-2">✉️ contact@clinicqueue.md</li>
+                <li className="mb-2">📍 Str. Exemplu 10, Chișinău</li>
+                <li className="mb-2">🕐 L-V 08:00–18:00</li>
+              </ul>
+            </Card.Body>
+          </Card>
+        </Col>
+
+        <Col md={7}>
+          <Card className="h-100 shadow-sm">
+            <Card.Body>
+              <Card.Title className="fw-bold">Scrie-ne</Card.Title>
+
+              {sent ? (
+                <Alert variant="success" className="mt-3">
+                  ✅ Mesajul a fost trimis! Te contactăm în curând.
+                </Alert>
+              ) : (
+                <Form onSubmit={onSubmit} className="mt-3">
+                  <Form.Group className="mb-3">
+                    <Form.Label className="fw-semibold">Nume</Form.Label>
+                    <Form.Control
+                      ref={nameRef}
+                      type="text"
+                      placeholder="Numele tău"
+                      required
+                    />
+                  </Form.Group>
+
+                  <Form.Group className="mb-3">
+                    <Form.Label className="fw-semibold">Mesaj</Form.Label>
+                    <Form.Control
+                      ref={messageRef}
+                      as="textarea"
+                      rows={4}
+                      placeholder="Cu ce te putem ajuta?"
+                      required
+                    />
+                  </Form.Group>
+
+                  <Button type="submit" variant="dark" className="w-100">
+                    Trimite mesaj
+                  </Button>
+                </Form>
+              )}
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+    </div>
+  );
+}
+------------------------------------------------------------
+
+================================================================
+PAS 12 — ACTUALIZEAZĂ LoginPage.tsx (Bootstrap Form, păstrăm useRef)
+================================================================
+
+------------------------------------------------------------
+import React, { useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { Form, Button, Alert, Card } from "react-bootstrap";
+import { login } from "../services/auth";
+import { useApi } from "../context/ApiContext";
+
+export function LoginPage() {
+  const api = useApi();
+  const navigate = useNavigate();
+  const location = useLocation() as { state?: { from?: string } };
+
+  const credentialRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    const credential = credentialRef.current?.value ?? "";
+    const password = passwordRef.current?.value ?? "";
+
+    try {
+      await login(api, credential, password);
+      const backTo = location.state?.from ?? "/";
+      navigate(backTo, { replace: true });
+    } catch {
+      setError("Credențiale incorecte. Verifică username/email și parola.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="d-flex justify-content-center mt-4">
+      <Card className="shadow-sm w-100" style={{ maxWidth: 420 }}>
+        <Card.Body className="p-4">
+          <h2 className="fw-bold mb-1">Login</h2>
+          <p className="text-muted mb-4">
+            Introdu username sau email și parola.
+          </p>
+
+          <Form onSubmit={onSubmit}>
+            <Form.Group className="mb-3">
+              <Form.Label className="fw-semibold">Username sau Email</Form.Label>
+              <Form.Control
+                ref={credentialRef}
+                type="text"
+                placeholder="ion.popescu sau ion@email.com"
+                required
+              />
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label className="fw-semibold">Parolă</Form.Label>
+              <Form.Control
+                ref={passwordRef}
+                type="password"
+                placeholder="••••••••"
+                required
+              />
+            </Form.Group>
+
+            {error && <Alert variant="danger" className="py-2">{error}</Alert>}
+
+            <Button
+              type="submit"
+              variant="dark"
+              disabled={loading}
+              className="w-100 mb-3"
+            >
+              {loading ? "Se autentifică..." : "Intră în cont"}
+            </Button>
+
+            <div className="text-center text-muted small">
+              Nu ai cont?{" "}
+              <a href="/register" className="text-dark fw-semibold">
+                Înregistrează-te
+              </a>
+            </div>
+          </Form>
+        </Card.Body>
+      </Card>
+    </div>
+  );
+}
+------------------------------------------------------------
+
+================================================================
+PAS 13 — CREEAZĂ RegisterPage.tsx (FIȘIER NOU)
+================================================================
+
+CREEAZĂ fișierul: frontend/src/pages/RegisterPage.tsx
+
+DE CE: Backend-ul are POST /api/reg. Trebuie și formular de Register.
+       Folosim useRef pe toate câmpurile (regula prof).
+
+------------------------------------------------------------
+import React, { useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Form, Button, Alert, Card, Row, Col } from "react-bootstrap";
+import { useApi } from "../context/ApiContext";
+
+export function RegisterPage() {
+  const api = useApi();
+  const navigate = useNavigate();
+
+  // useRef — uncontrolled form (fara useState+onChange pe campuri)
+  const firstNameRef = useRef<HTMLInputElement>(null);
+  const lastNameRef = useRef<HTMLInputElement>(null);
+  const userNameRef = useRef<HTMLInputElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const phoneRef = useRef<HTMLInputElement>(null);
+
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    const body = {
+      firstName: firstNameRef.current?.value ?? "",
+      lastName: lastNameRef.current?.value ?? "",
+      userName: userNameRef.current?.value ?? "",
+      email: emailRef.current?.value ?? "",
+      password: passwordRef.current?.value ?? "",
+      phone: phoneRef.current?.value ?? "",
+    };
+
+    try {
+      await api.post("/reg", body);
+      // Prof: "JWT doar la login. La register → redirect la login"
+      navigate("/login", { replace: true });
+    } catch (err: any) {
+      const msg = err.response?.data;
+      setError(typeof msg === "string" ? msg : "Înregistrare eșuată. Încearcă din nou.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="d-flex justify-content-center mt-4">
+      <Card className="shadow-sm w-100" style={{ maxWidth: 520 }}>
+        <Card.Body className="p-4">
+          <h2 className="fw-bold mb-1">Înregistrare</h2>
+          <p className="text-muted mb-4">
+            Creează un cont nou pentru a accesa platforma.
+          </p>
+
+          <Form onSubmit={onSubmit}>
+            <Row className="g-3 mb-3">
+              <Col sm={6}>
+                <Form.Group>
+                  <Form.Label className="fw-semibold">Prenume</Form.Label>
+                  <Form.Control
+                    ref={firstNameRef}
+                    type="text"
+                    placeholder="Ion"
+                    required
+                  />
+                </Form.Group>
+              </Col>
+              <Col sm={6}>
+                <Form.Group>
+                  <Form.Label className="fw-semibold">Nume</Form.Label>
+                  <Form.Control
+                    ref={lastNameRef}
+                    type="text"
+                    placeholder="Popescu"
+                    required
+                  />
+                </Form.Group>
+              </Col>
+            </Row>
+
+            <Form.Group className="mb-3">
+              <Form.Label className="fw-semibold">Username</Form.Label>
+              <Form.Control
+                ref={userNameRef}
+                type="text"
+                placeholder="ion.popescu"
+                required
+              />
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label className="fw-semibold">Email</Form.Label>
+              <Form.Control
+                ref={emailRef}
+                type="email"
+                placeholder="ion@email.com"
+                required
+              />
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label className="fw-semibold">Parolă</Form.Label>
+              <Form.Control
+                ref={passwordRef}
+                type="password"
+                placeholder="Minim 6 caractere"
+                required
+                minLength={6}
+              />
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label className="fw-semibold">Telefon</Form.Label>
+              <Form.Control
+                ref={phoneRef}
+                type="tel"
+                placeholder="+373 00 000 000"
+              />
+            </Form.Group>
+
+            {error && <Alert variant="danger" className="py-2">{error}</Alert>}
+
+            <Button
+              type="submit"
+              variant="dark"
+              disabled={loading}
+              className="w-100 mb-3"
+            >
+              {loading ? "Se creează contul..." : "Creează cont"}
+            </Button>
+
+            <div className="text-center text-muted small">
+              Ai deja cont?{" "}
+              <a href="/login" className="text-dark fw-semibold">
+                Autentifică-te
+              </a>
+            </div>
+          </Form>
+        </Card.Body>
+      </Card>
+    </div>
+  );
+}
+------------------------------------------------------------
+
+================================================================
+PAS 14 — ACTUALIZEAZĂ AdminDashboardPage.tsx
+================================================================
+
+------------------------------------------------------------
+import { useEffect, useState } from "react";
+import { Card, Row, Col, Alert, Spinner, Badge } from "react-bootstrap";
+import { useApi } from "../context/ApiContext";
+import { getUser } from "../services/auth";
+
+export function AdminDashboardPage() {
+  const api = useApi();
+  const user = getUser();
+  const [doctors, setDoctors] = useState<any[]>([]);
+  const [appointments, setAppointments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([
+      api.get("/doctors"),
+      api.get("/appointments"),
+    ])
+      .then(([docRes, appRes]) => {
+        setDoctors(docRes.data);
+        setAppointments(appRes.data);
+      })
+      .finally(() => setLoading(false));
+  }, [api]);
+
+  if (loading) return (
+    <div className="text-center py-5">
+      <Spinner animation="border" variant="dark" />
+    </div>
+  );
+
+  return (
+    <div>
+      <h1 className="fw-bold mb-1">Admin Dashboard</h1>
+      <p className="text-muted mb-4">
+        Autentificat ca: <strong>{user?.username}</strong>{" "}
+        <Badge bg="dark">{user?.role}</Badge>
+      </p>
+
+      {/* Statistici rapide */}
+      <Row xs={1} md={3} className="g-3 mb-4">
+        <Col>
+          <Card className="text-center shadow-sm border-0 bg-dark text-white">
+            <Card.Body>
+              <div style={{ fontSize: 36, fontWeight: 900 }}>{doctors.length}</div>
+              <div className="text-white-50">Doctori</div>
+            </Card.Body>
+          </Card>
+        </Col>
+        <Col>
+          <Card className="text-center shadow-sm border-0 bg-secondary text-white">
+            <Card.Body>
+              <div style={{ fontSize: 36, fontWeight: 900 }}>{appointments.length}</div>
+              <div className="text-white-50">Programări</div>
+            </Card.Body>
+          </Card>
+        </Col>
+        <Col>
+          <Card className="text-center shadow-sm border-0 bg-light">
+            <Card.Body>
+              <div style={{ fontSize: 36, fontWeight: 900 }}>
+                {appointments.filter((a: any) => a.status === "Pending").length}
+              </div>
+              <div className="text-muted">Programări Pending</div>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* Lista doctori */}
+      <h5 className="fw-bold mb-3">Doctori înregistrați</h5>
+      {doctors.length === 0 ? (
+        <Alert variant="info">Nu există doctori.</Alert>
+      ) : (
+        <Row xs={1} md={2} lg={3} className="g-2 mb-4">
+          {doctors.map((d: any) => (
+            <Col key={d.id}>
+              <Card className="shadow-sm">
+                <Card.Body className="py-2">
+                  <div className="fw-semibold">{d.name}</div>
+                  <div className="text-muted small">{d.specialty}</div>
+                </Card.Body>
+              </Card>
+            </Col>
+          ))}
+        </Row>
+      )}
+    </div>
+  );
+}
+------------------------------------------------------------
+
+================================================================
+PAS 15 — ACTUALIZEAZĂ ServerDownPage.tsx (Bootstrap)
+================================================================
+
+------------------------------------------------------------
+import { Container, Alert, Button } from "react-bootstrap";
+
+export function ServerDownPage() {
+  return (
+    <Container
+      className="d-flex align-items-center justify-content-center"
+      style={{ minHeight: "100vh" }}
+    >
+      <div className="text-center">
+        <div style={{ fontSize: 64 }}>⚠️</div>
+        <h1 className="fw-bold text-danger mt-3">Server indisponibil</h1>
+        <p className="text-muted">
+          Nu s-a putut stabili conexiunea cu serverul. Verifică că backend-ul
+          este pornit și încearcă din nou.
+        </p>
+        <Button
+          variant="danger"
+          onClick={() => window.location.replace("/")}
+        >
+          Încearcă din nou
+        </Button>
+      </div>
+    </Container>
+  );
+}
+------------------------------------------------------------
+
+================================================================
+PAS 16 — VERIFICARE FINALĂ
+================================================================
+
+1. Rulează frontend:
+   npm run dev
+
+2. Verifică că nu sunt erori TypeScript în consolă (Vite le afișează).
+
+3. Dacă apare eroarea:
+   "Module not found: react-bootstrap"
+   → rulezi din nou: npm install react-bootstrap bootstrap
+
+4. Verifică responsive (F12 → Toggle device toolbar în Chrome):
+   - Navbar trebuie să aibă butonul hamburger pe mobil
+   - Cardurile trebuie să se stivuiască pe o coloană pe mobil
+
+5. Test flow complet:
+   - / → HomePage cu 3 carduri Bootstrap
+   - /doctors → liste cu DoctorCard Bootstrap
+   - /login → form Bootstrap (useRef, fără onChange)
+   - /register → form Bootstrap (useRef, fără onChange) → redirect /login
+   - /book → form Bootstrap (useRef) → POST /api/appointments
+   - /contact → form Bootstrap (useRef)
+   - /admin → statistici + liste reale (doar cu token Admin)
+
+================================================================
+REZUMAT RAPID (CHECKLIST)
+================================================================
+
+  [ ] PAS 1:  npm install react-bootstrap bootstrap
+  [ ] PAS 2:  Golește App.css + simplifică index.css
+  [ ] PAS 3:  main.tsx → import Bootstrap CSS + ruta /register
+  [ ] PAS 4:  AppLayout.tsx → Navbar Bootstrap
+  [ ] PAS 5:  HomePage.tsx → Bootstrap Cards
+  [ ] PAS 6:  DoctorCard.tsx → Bootstrap Card
+  [ ] PAS 7:  DoctorsPage.tsx → Bootstrap Row/Col + Spinner
+  [ ] PAS 8:  AppointmentCard.tsx → Bootstrap Card + Badge
+  [ ] PAS 9:  AppointmentsPage.tsx → Bootstrap + Spinner
+  [ ] PAS 10: BookAppointmentPage.tsx → useRef + Bootstrap Form
+  [ ] PAS 11: ContactPage.tsx → useRef + Bootstrap Form
+  [ ] PAS 12: LoginPage.tsx → Bootstrap Form (useRef deja ok)
+  [ ] PAS 13: RegisterPage.tsx → fișier NOU (useRef + Bootstrap)
+  [ ] PAS 14: AdminDashboardPage.tsx → date reale + Bootstrap stats
+  [ ] PAS 15: ServerDownPage.tsx → Bootstrap
+  [ ] PAS 16: Verificare finală + responsive test
+
+================================================================
+COMMIT DUPĂ ETAPA 7
+================================================================
+
+  git add -A
+  git commit -m "feat: Etapa 7 - Bootstrap UI, Register page, fixare formulare"
+  git push origin etapa6-integrare
+
+  (sau creează branch nou: git checkout -b etapa7-bootstrap)
+
+================================================================

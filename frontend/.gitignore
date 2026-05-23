@@ -6,9 +6,10 @@
 # Logs
 **/*.log
 
-# Env (secrete)
-**/.env
-**/.env.*
+# Environment files
+.env
+.env.local
+.env.*.local
 
 # Visual Studio
 .vs/

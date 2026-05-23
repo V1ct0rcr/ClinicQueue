@@ -1,0 +1,980 @@
+================================================================
+  PLAN ETAPA 6 — INTEGRARE FRONTEND ↔ BACKEND
+  Bazat pe: cerințele prof. Musteată + Sarcina 5 + reguli React
+  Data: mai 2026
+================================================================
+
+PROBLEME DIN VERSIUNEA ANTERIOARĂ A PLANULUI (de ce s-a rescris):
+  ✗ api.ts simplu ≠ Axios Provider (prof cere: context + hook + provider)
+  ✗ .env lipsea (prof cere apiServerURL din .env, NU hardcodat)
+  ✗ LoginPage folosea useState + onChange (prof interzice asta explicit)
+  ✗ .map() din DoctorsPage nu era extras în componentă separată
+  ✗ Pagina 500 lipsea (prof cere redirect la /500 dacă backend e oprit)
+  ✗ DoctorDto real are câmpuri diferite față de ce era scris (name, specialty,
+    rating, location — NU firstName/lastName)
+
+================================================================
+FIȘIERE MODIFICATE ÎN ACEASTĂ ETAPĂ
+================================================================
+
+  BACKEND:
+    [M] backend/eUseControl.Api/Program.cs       → adăugăm CORS
+
+  FRONTEND — FIȘIERE NOI:
+    [N] frontend/.env                             → VITE_API_URL (gitignored)
+    [N] frontend/.env.example                     → template pentru git
+    [N] frontend/src/context/ApiContext.tsx       → Axios Provider + useApi hook
+    [N] frontend/src/pages/ServerDownPage.tsx     → pagina afișată la /500
+    [N] frontend/src/components/DoctorCard.tsx    → componentă extrasă din .map()
+    [N] frontend/src/components/AppointmentCard.tsx → componentă extrasă din .map()
+
+  FRONTEND — FIȘIERE MODIFICATE:
+    [M] frontend/src/services/auth.ts             → JWT real în loc de mock
+    [M] frontend/src/pages/LoginPage.tsx          → form real cu useRef (fără onChange)
+    [M] frontend/src/pages/DoctorsPage.tsx        → API real + DoctorCard
+    [M] frontend/src/pages/AppointmentsPage.tsx   → API real + AppointmentCard
+    [M] frontend/src/components/ProtectedRoute.tsx → verifică token real
+    [M] frontend/src/layouts/AppLayout.tsx        → role === "Admin" (cu A mare)
+    [M] frontend/src/main.tsx                     → ApiProvider + ruta /500 + "Admin"
+
+  FRONTEND — FIȘIERE ȘTERSE:
+    [D] frontend/src/types/auth.ts                → duplicat, nu mai e folosit
+
+================================================================
+PAS 1 — CORS ÎN BACKEND (Program.cs)
+================================================================
+
+DE CE: Browserul blochează cererile de la http://localhost:5173
+       către https://localhost:7128 fără header CORS.
+
+DESCHIDE: backend/eUseControl.Api/Program.cs
+
+ADAUGĂ imediat după linia "builder.Services.AddAuthorization();":
+
+------------------------------------------------------------
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("FrontendPolicy", policy =>
+    {
+        policy.WithOrigins("http://localhost:5173")
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
+------------------------------------------------------------
+
+ADAUGĂ în pipeline (după "app.UseHttpsRedirection();"),
+ÎNAINTE de UseAuthentication:
+
+------------------------------------------------------------
+app.UseHttpsRedirection();
+app.UseCors("FrontendPolicy");   // ← linie nouă
+app.UseAuthentication();
+app.UseAuthorization();
+------------------------------------------------------------
+
+ATENȚIE: ordinea contează. CORS trebuie ÎNAINTE de Authentication.
+
+VERIFICARE: Build backend (Ctrl+Shift+B) → fără erori.
+
+================================================================
+PAS 2 — FIȘIERUL .env (apiServerURL din mediu, NU hardcodat)
+================================================================
+
+DE CE: Prof. cere explicit ".env cu apiServerURL". URL-ul API-ului
+       nu trebuie hardcodat în cod — vine din variabilă de mediu.
+
+CREEAZĂ fișierul: frontend/.env
+(în rădăcina folderului frontend/, lângă package.json)
+
+------------------------------------------------------------
+VITE_API_URL=https://localhost:7128/api
+------------------------------------------------------------
+
+CREEAZĂ fișierul: frontend/.env.example
+(acesta SE pune pe git, arată ce variabile sunt necesare)
+
+------------------------------------------------------------
+VITE_API_URL=https://localhost:PORT/api
+------------------------------------------------------------
+
+VERIFICĂ că frontend/.gitignore conține ".env" (deja e acolo dacă
+proiectul a fost creat cu Vite). Dacă nu, adaugă linia:
+  .env
+
+ATENȚIE: .env NU se pune pe GitHub (conține URL-uri locale).
+         .env.example DA se pune pe GitHub.
+
+================================================================
+PAS 3 — AXIOS PROVIDER (context + hook + interceptors)
+================================================================
+
+DE CE: Prof. cere "Axios Provider obligatoriu (context + hook +
+       interceptors + .env cu apiServerURL)". Nu e suficient un
+       simplu axios.create() exportat ca variabilă.
+
+CREEAZĂ folderul: frontend/src/context/
+CREEAZĂ fișierul: frontend/src/context/ApiContext.tsx
+
+Conținut complet:
+
+------------------------------------------------------------
+import React, { createContext, useContext, useMemo } from "react";
+import axios, { type AxiosInstance } from "axios";
+
+// 1. CONTEXT — stochează instanța Axios
+const ApiContext = createContext<AxiosInstance | null>(null);
+
+// 2. PROVIDER — creează instanța și o oferă copiilor
+export function ApiProvider({ children }: { children: React.ReactNode }) {
+  const api = useMemo(() => {
+    const instance = axios.create({
+      baseURL: import.meta.env.VITE_API_URL,   // din .env
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    // Request interceptor: adaugă automat token JWT la fiecare cerere
+    instance.interceptors.request.use((config) => {
+      const token = localStorage.getItem("clinicqueue_token");
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+      return config;
+    });
+
+    // Response interceptor: dacă backend-ul e oprit → redirect la /500
+    instance.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        if (!error.response) {
+          // Network error — serverul nu răspunde
+          window.location.href = "/500";
+        }
+        return Promise.reject(error);
+      }
+    );
+
+    return instance;
+  }, []);
+
+  return (
+    <ApiContext.Provider value={api}>
+      {children}
+    </ApiContext.Provider>
+  );
+}
+
+// 3. HOOK — folosit în componente pentru a accesa instanța Axios
+export function useApi(): AxiosInstance {
+  const api = useContext(ApiContext);
+  if (!api) {
+    throw new Error("useApi trebuie folosit în interiorul <ApiProvider>");
+  }
+  return api;
+}
+------------------------------------------------------------
+
+EXPLICAȚIE:
+  - ApiContext     = "containerul" care ține instanța axios
+  - ApiProvider    = componenta care creează instanța + pune interceptorii
+                     + o oferă tuturor componentelor copil
+  - useApi()       = hook-ul cu care orice componentă cere instanța
+                     (în loc să importe direct axios)
+  - import.meta.env.VITE_API_URL = citește din .env (setat la Pas 2)
+
+================================================================
+PAS 4 — ÎNLOCUIEȘTE src/services/auth.ts (JWT real)
+================================================================
+
+ȘTERGE tot conținutul actual și înlocuiește cu:
+
+------------------------------------------------------------
+import type { AxiosInstance } from "axios";
+
+// ─── Tipuri ──────────────────────────────────────────────
+// "User" și "Admin" cu majusculă — exact cum le generează .NET
+export type Role = "User" | "Admin";
+
+export interface AuthUser {
+  username: string;
+  role: Role;
+  userId: string;
+}
+
+// ─── Cheia din localStorage ──────────────────────────────
+const TOKEN_KEY = "clinicqueue_token";
+
+// ─── Decodifică payload-ul JWT (fără librărie externă) ───
+function decodePayload(token: string): Record<string, unknown> {
+  try {
+    const base64Url = token.split(".")[1];
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const json = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    );
+    return JSON.parse(json);
+  } catch {
+    return {};
+  }
+}
+
+// ─── Funcții publice ─────────────────────────────────────
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function getUser(): AuthUser | null {
+  const token = getToken();
+  if (!token) return null;
+
+  const payload = decodePayload(token);
+
+  // Verifică expirarea tokenului
+  const exp = payload["exp"] as number;
+  if (exp && Date.now() / 1000 > exp) {
+    logout();
+    return null;
+  }
+
+  // Claim-urile din JWT generat de .NET:
+  //   "unique_name" → ClaimTypes.Name (username)
+  //   "role"        → ClaimTypes.Role ("User" sau "Admin")
+  //   "nameid"      → ClaimTypes.NameIdentifier (userId)
+  const username = (payload["unique_name"] as string) ?? "";
+  const role = (payload["role"] as Role) ?? "User";
+  const userId = (payload["nameid"] as string) ?? "";
+
+  return { username, role, userId };
+}
+
+export function hasRole(requiredRole: Role): boolean {
+  const user = getUser();
+  if (!user) return false;
+  if (user.role === "Admin") return true;  // Admin are acces la tot
+  return user.role === requiredRole;
+}
+
+export function isAuthenticated(): boolean {
+  return getUser() !== null;
+}
+
+// Login real: POST /api/session/auth
+export async function login(
+  api: AxiosInstance,
+  credentialType: string,
+  password: string
+): Promise<void> {
+  const response = await api.post<{ token: string }>("/session/auth", {
+    credentialType,
+    password,
+  });
+  localStorage.setItem(TOKEN_KEY, response.data.token);
+  window.dispatchEvent(new Event("authchange"));
+}
+
+export function logout(): void {
+  localStorage.removeItem(TOKEN_KEY);
+  window.dispatchEvent(new Event("authchange"));
+}
+------------------------------------------------------------
+
+NOTĂ: Funcția login primește `api` ca parametru (instanța din useApi()).
+      Asta respectă pattern-ul Provider — nu importăm axios direct.
+
+VERIFICARE claim-uri JWT:
+  Dacă după login username sau role apare undefined:
+  1. Fă login din Swagger → copiază token-ul
+  2. Du-te pe https://jwt.io → lipește token-ul
+  3. Uită-te în "Payload" → notează cheile exacte
+  4. Dacă cheia e "name" în loc de "unique_name" → schimb-o în getUser()
+
+================================================================
+PAS 5 — ȘTERGE src/types/auth.ts
+================================================================
+
+Fișierul src/types/auth.ts conține tipuri duplicate față de
+services/auth.ts și nu e importat nicăieri.
+
+ACȚIUNE: Șterge fișierul src/types/auth.ts (click dreapta → Delete).
+
+================================================================
+PAS 6 — CREEAZĂ src/pages/ServerDownPage.tsx (pagina 500)
+================================================================
+
+DE CE: Prof. cere "dacă backendul e închis → redirect la pagina 500".
+       Interceptorul din ApiProvider face redirect-ul, dar trebuie
+       să existe și pagina de destinație.
+
+CREEAZĂ fișierul: frontend/src/pages/ServerDownPage.tsx
+
+------------------------------------------------------------
+export function ServerDownPage() {
+  return (
+    <div
+      style={{
+        display: "grid",
+        placeItems: "center",
+        minHeight: "100vh",
+        background: "#fef2f2",
+        textAlign: "center",
+        padding: 24,
+      }}
+    >
+      <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ fontSize: 64 }}>⚠️</div>
+        <h1 style={{ margin: 0, fontSize: 28, color: "#dc2626" }}>
+          Server indisponibil
+        </h1>
+        <p style={{ margin: 0, color: "#6b7280", maxWidth: 400 }}>
+          Nu s-a putut stabili conexiunea cu serverul. Verifică că
+          backend-ul este pornit și încearcă din nou.
+        </p>
+        <button
+          onClick={() => window.location.replace("/")}
+          style={{
+            marginTop: 8,
+            padding: "10px 20px",
+            borderRadius: 10,
+            border: 0,
+            background: "#dc2626",
+            color: "white",
+            fontWeight: 700,
+            cursor: "pointer",
+            width: "fit-content",
+            justifySelf: "center",
+          }}
+        >
+          Încearcă din nou
+        </button>
+      </div>
+    </div>
+  );
+}
+------------------------------------------------------------
+
+================================================================
+PAS 7 — CREEAZĂ src/components/DoctorCard.tsx (componentă separată)
+================================================================
+
+DE CE: Prof. cere explicit că orice cod din .map() trebuie extras
+       într-o componentă separată în propriul fișier.
+
+CREEAZĂ fișierul: frontend/src/components/DoctorCard.tsx
+
+------------------------------------------------------------
+export type DoctorCardProps = {
+  id: number;
+  name: string;
+  specialty: string;
+  rating: number;
+  location: string;
+};
+
+export function DoctorCard({ name, specialty, rating, location }: DoctorCardProps) {
+  return (
+    <div
+      style={{
+        border: "1px solid #e2e8f0",
+        borderRadius: 14,
+        padding: 14,
+      }}
+    >
+      <div style={{ fontWeight: 800 }}>{name}</div>
+      <div style={{ fontSize: 13, color: "#64748b" }}>{specialty}</div>
+      <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <span
+          style={{
+            fontSize: 13,
+            background: "#f1f5f9",
+            padding: "4px 8px",
+            borderRadius: 8,
+          }}
+        >
+          ⭐ {rating}
+        </span>
+        <span style={{ fontSize: 13, color: "#475569" }}>{location}</span>
+      </div>
+    </div>
+  );
+}
+------------------------------------------------------------
+
+NOTĂ: Câmpurile corespund exact cu DoctorDto din backend:
+  public int Id, string Name, string Specialty, double Rating, string Location
+
+================================================================
+PAS 8 — CREEAZĂ src/components/AppointmentCard.tsx
+================================================================
+
+CREEAZĂ fișierul: frontend/src/components/AppointmentCard.tsx
+
+------------------------------------------------------------
+export type AppointmentCardProps = {
+  id: number;
+  patientId: number;
+  doctorId: number;
+  appointmentDate: string;
+  status: string;
+};
+
+export function AppointmentCard({
+  id,
+  patientId,
+  doctorId,
+  appointmentDate,
+  status,
+}: AppointmentCardProps) {
+  return (
+    <div
+      style={{
+        border: "1px solid #e2e8f0",
+        borderRadius: 14,
+        padding: 14,
+        display: "grid",
+        gap: 4,
+      }}
+    >
+      <div style={{ fontWeight: 800 }}>Programare #{id}</div>
+      <div style={{ fontSize: 13, color: "#64748b" }}>
+        Data:{" "}
+        {new Date(appointmentDate).toLocaleDateString("ro-RO", {
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        })}
+      </div>
+      <div style={{ fontSize: 13, color: "#64748b" }}>
+        Doctor ID: {doctorId} | Pacient ID: {patientId}
+      </div>
+      <div style={{ fontSize: 13 }}>
+        Status:{" "}
+        <span
+          style={{
+            background: status === "Pending" ? "#fef9c3" : "#dcfce7",
+            color: status === "Pending" ? "#854d0e" : "#166534",
+            padding: "2px 8px",
+            borderRadius: 8,
+            fontWeight: 600,
+          }}
+        >
+          {status}
+        </span>
+      </div>
+    </div>
+  );
+}
+------------------------------------------------------------
+
+NOTĂ: Câmpurile corespund exact cu AppointmentDto din backend:
+  public int Id, PatientId, DoctorId, DateTime AppointmentDate, string Status
+
+================================================================
+PAS 9 — ÎNLOCUIEȘTE src/pages/LoginPage.tsx (form cu useRef)
+================================================================
+
+DE CE: Prof. interzice explicit "abuz de useState la onChange".
+       Formularul corect folosește useRef (uncontrolled form) —
+       citești valorile doar la submit, nu la fiecare tastă.
+
+ȘTERGE tot conținutul actual și înlocuiește cu:
+
+------------------------------------------------------------
+import React, { useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { login } from "../services/auth";
+import { useApi } from "../context/ApiContext";
+
+export function LoginPage() {
+  const api = useApi();
+  const navigate = useNavigate();
+  const location = useLocation() as { state?: { from?: string } };
+
+  // useRef — nu declanșează re-render la fiecare tastă (uncontrolled form)
+  const credentialRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    const credential = credentialRef.current?.value ?? "";
+    const password = passwordRef.current?.value ?? "";
+
+    try {
+      await login(api, credential, password);
+      const backTo = location.state?.from ?? "/";
+      navigate(backTo, { replace: true });
+    } catch {
+      setError("Credențiale incorecte. Verifică username/email și parola.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const inputStyle: React.CSSProperties = {
+    padding: "10px 14px",
+    borderRadius: 10,
+    border: "1px solid #e2e8f0",
+    fontSize: 15,
+    width: "100%",
+    boxSizing: "border-box",
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 16, maxWidth: 400 }}>
+      <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900 }}>Login</h1>
+      <p style={{ margin: 0, color: "#475569", fontSize: 14 }}>
+        Introdu username sau email și parola contului tău.
+      </p>
+
+      <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gap: 6 }}>
+          <label style={{ fontWeight: 700, fontSize: 14 }}>
+            Username sau Email
+          </label>
+          <input
+            ref={credentialRef}
+            type="text"
+            placeholder="ion.popescu sau ion@email.com"
+            required
+            style={inputStyle}
+          />
+        </div>
+
+        <div style={{ display: "grid", gap: 6 }}>
+          <label style={{ fontWeight: 700, fontSize: 14 }}>Parolă</label>
+          <input
+            ref={passwordRef}
+            type="password"
+            placeholder="••••••••"
+            required
+            style={inputStyle}
+          />
+        </div>
+
+        {error && (
+          <div
+            style={{
+              padding: "10px 14px",
+              borderRadius: 10,
+              background: "#fef2f2",
+              border: "1px solid #fecaca",
+              color: "#dc2626",
+              fontSize: 14,
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          style={{
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: 0,
+            background: loading ? "#94a3b8" : "#0f172a",
+            color: "white",
+            fontWeight: 900,
+            fontSize: 15,
+            cursor: loading ? "not-allowed" : "pointer",
+          }}
+        >
+          {loading ? "Se autentifică..." : "Intră în cont"}
+        </button>
+      </form>
+    </div>
+  );
+}
+------------------------------------------------------------
+
+DIFERENȚA FAȚĂ DE VERSIUNEA VECHE:
+  ✓ credentialRef + passwordRef în loc de state pentru câmpuri
+  ✓ NU există onChange pe input-uri
+  ✓ Valorile se citesc O SINGURĂ DATĂ, la onSubmit
+  ✓ Formularul nu re-renderizează la fiecare tastă
+
+================================================================
+PAS 10 — ÎNLOCUIEȘTE src/pages/DoctorsPage.tsx (API real)
+================================================================
+
+ȘTERGE tot conținutul actual și înlocuiește cu:
+
+------------------------------------------------------------
+import { useEffect, useState } from "react";
+import { useApi } from "../context/ApiContext";
+import { DoctorCard, type DoctorCardProps } from "../components/DoctorCard";
+
+export function DoctorsPage() {
+  const api = useApi();
+  const [doctors, setDoctors] = useState<DoctorCardProps[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api
+      .get<DoctorCardProps[]>("/doctors")
+      .then((res) => setDoctors(res.data))
+      .catch(() => setError("Nu s-au putut încărca doctorii."))
+      .finally(() => setLoading(false));
+  }, [api]);
+
+  if (loading) return <p>Se încarcă...</p>;
+  if (error) return <p style={{ color: "#dc2626" }}>{error}</p>;
+  if (doctors.length === 0) return <p>Nu există doctori înregistrați.</p>;
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <h1 style={{ fontSize: 20, fontWeight: 900, margin: 0 }}>Doctori</h1>
+
+      <div
+        style={{
+          display: "grid",
+          gap: 12,
+          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+        }}
+      >
+        {doctors.map((doctor) => (
+          <DoctorCard key={doctor.id} {...doctor} />
+        ))}
+      </div>
+    </div>
+  );
+}
+------------------------------------------------------------
+
+CHEIE: doctors.map() folosește <DoctorCard> separat — regula prof. respectată.
+
+================================================================
+PAS 11 — ÎNLOCUIEȘTE src/pages/AppointmentsPage.tsx (API real)
+================================================================
+
+ȘTERGE tot conținutul actual și înlocuiește cu:
+
+------------------------------------------------------------
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useApi } from "../context/ApiContext";
+import { isAuthenticated } from "../services/auth";
+import {
+  AppointmentCard,
+  type AppointmentCardProps,
+} from "../components/AppointmentCard";
+
+export function AppointmentsPage() {
+  const api = useApi();
+  const navigate = useNavigate();
+  const [appointments, setAppointments] = useState<AppointmentCardProps[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      navigate("/login", {
+        replace: true,
+        state: { from: "/appointments" },
+      });
+      return;
+    }
+
+    api
+      .get<AppointmentCardProps[]>("/appointments")
+      .then((res) => setAppointments(res.data))
+      .catch((err) => {
+        if (err.response?.status === 401) {
+          navigate("/login", {
+            replace: true,
+            state: { from: "/appointments" },
+          });
+        } else {
+          setError("Nu s-au putut încărca programările.");
+        }
+      })
+      .finally(() => setLoading(false));
+  }, [api, navigate]);
+
+  if (loading) return <p>Se încarcă...</p>;
+  if (error) return <p style={{ color: "#dc2626" }}>{error}</p>;
+  if (appointments.length === 0)
+    return <p style={{ color: "#475569" }}>Nu ai programări înregistrate.</p>;
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <h1 style={{ margin: 0 }}>Programările mele</h1>
+
+      <div style={{ display: "grid", gap: 10 }}>
+        {appointments.map((appointment) => (
+          <AppointmentCard key={appointment.id} {...appointment} />
+        ))}
+      </div>
+    </div>
+  );
+}
+------------------------------------------------------------
+
+================================================================
+PAS 12 — ÎNLOCUIEȘTE src/components/ProtectedRoute.tsx
+================================================================
+
+ȘTERGE tot conținutul actual și înlocuiește cu:
+
+------------------------------------------------------------
+import React from "react";
+import { Navigate, useLocation } from "react-router-dom";
+import type { Role } from "../services/auth";
+import { hasRole } from "../services/auth";
+
+type Props = {
+  requiredRole: Role;
+  children: React.ReactNode;
+};
+
+export function ProtectedRoute({ requiredRole, children }: Props) {
+  const location = useLocation();
+
+  if (!hasRole(requiredRole)) {
+    return (
+      <Navigate to="/login" replace state={{ from: location.pathname }} />
+    );
+  }
+
+  return <>{children}</>;
+}
+------------------------------------------------------------
+
+Nu se schimbă logica — dar acum Role este "User" | "Admin" (din JWT real).
+
+================================================================
+PAS 13 — MODIFICĂ src/layouts/AppLayout.tsx (1 linie)
+================================================================
+
+GĂSEȘTE această linie în AppLayout.tsx:
+    const isAdmin = useMemo(() => user?.role === "admin", [user]);
+
+ÎNLOCUIEȘTE cu:
+    const isAdmin = useMemo(() => user?.role === "Admin", [user]);
+
+(litera A devine mare — rolul vine din JWT ca "Admin", nu "admin")
+
+Nu se schimbă altceva în AppLayout.tsx.
+
+================================================================
+PAS 14 — MODIFICĂ src/main.tsx (ApiProvider + ruta /500)
+================================================================
+
+ȘTERGE tot conținutul actual și înlocuiește cu:
+
+------------------------------------------------------------
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { createBrowserRouter, RouterProvider } from "react-router-dom";
+
+import { ApiProvider } from "./context/ApiContext";
+import { AppLayout } from "./layouts/AppLayout";
+import { HomePage } from "./pages/HomePage";
+import { DoctorsPage } from "./pages/DoctorsPage";
+import { BookAppointmentPage } from "./pages/BookAppointmentPage";
+import { AppointmentsPage } from "./pages/AppointmentsPage";
+import { ContactPage } from "./pages/ContactPage";
+import { LoginPage } from "./pages/LoginPage";
+import { AdminDashboardPage } from "./pages/AdminDashboardPage";
+import { ServerDownPage } from "./pages/ServerDownPage";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+
+import "./index.css";
+
+const router = createBrowserRouter([
+  // Ruta pentru pagina 500 — fără layout, afișată singură
+  {
+    path: "/500",
+    element: <ServerDownPage />,
+  },
+
+  // Restul rutelor — cu ApiProvider + AppLayout
+  {
+    element: (
+      <ApiProvider>
+        <AppLayout />
+      </ApiProvider>
+    ),
+    children: [
+      { path: "/", element: <HomePage /> },
+      { path: "/doctors", element: <DoctorsPage /> },
+      { path: "/book", element: <BookAppointmentPage /> },
+      { path: "/appointments", element: <AppointmentsPage /> },
+      { path: "/contact", element: <ContactPage /> },
+      { path: "/login", element: <LoginPage /> },
+      {
+        path: "/admin",
+        element: (
+          <ProtectedRoute requiredRole="Admin">
+            <AdminDashboardPage />
+          </ProtectedRoute>
+        ),
+      },
+    ],
+  },
+]);
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <RouterProvider router={router} />
+  </React.StrictMode>
+);
+------------------------------------------------------------
+
+DE CE ApiProvider e în router (nu înafară):
+  ApiProvider folosește window.location.href pentru redirect la /500,
+  deci nu are nevoie de useNavigate și poate sta oriunde în arbore.
+  Totuși, îl punem ÎNĂUNTRUL router-ului ca să fie corect arhitectural
+  și ca AppLayout să aibă acces la useApi() prin context.
+
+================================================================
+PAS 15 — VERIFICĂ .gitignore frontend
+================================================================
+
+DESCHIDE: frontend/.gitignore
+ASIGURĂ-TE că există aceste linii (Vite le adaugă implicit, dar verifică):
+
+------------------------------------------------------------
+# Environment files
+.env
+.env.local
+.env.*.local
+------------------------------------------------------------
+
+Dacă lipsesc, adaugă-le.
+
+================================================================
+PAS 16 — TEST COMPLET
+================================================================
+
+ORDINE DE PORNIRE:
+  1. Backend pornit din Visual Studio (F5, profilul "https")
+     → https://localhost:7128/swagger trebuie să meargă
+  2. Terminal în frontend/:
+     npm run dev
+     → http://localhost:5173
+
+─── TEST 1: Doctors (endpoint public, fără login) ───────────
+  Mergi la http://localhost:5173/doctors
+  → Trebuie să apară cardurile doctorilor din baza de date
+  → Dacă apare "Nu s-au putut încărca doctorii" → F12 → Console
+    Caută mesajul de eroare exact și trimite-l pentru debug
+
+─── TEST 2: Login real ──────────────────────────────────────
+  Mergi la http://localhost:5173/login
+  → Introduci username sau email + parolă (un user existent în DB)
+  → Apasă "Intră în cont"
+  → Trebuie să te redirecționeze la /
+  → Headerul trebuie să afișeze username-ul tău (nu "guest")
+
+─── TEST 3: Appointments (endpoint protejat) ────────────────
+  Fără login: mergi la /appointments → trebuie redirect la /login
+  Cu login: mergi la /appointments → trebuie să apară programările
+
+─── TEST 4: Admin Dashboard ─────────────────────────────────
+  Ai nevoie de un user Admin în baza de date.
+  Rulează în SQL Server Management Studio:
+    UPDATE Users SET Role = 30 WHERE UserName = 'username_tau';
+  Loghează-te cu acel user → trebuie să apară linkul "Admin" în navbar
+  Mergi la /admin → trebuie să funcționeze
+
+─── TEST 5: Pagina 500 ──────────────────────────────────────
+  OPREȘTE backend-ul din Visual Studio (Shift+F5)
+  În browser, mergi la /doctors (sau orice pagină)
+  → Trebuie redirecționat automat la /500
+  → Apare pagina "Server indisponibil"
+
+─── TEST 6: Logout ──────────────────────────────────────────
+  Apasă Logout → header revine la "guest"
+  Dacă mergi la /appointments → redirect la /login
+
+================================================================
+PROBLEME FRECVENTE ȘI SOLUȚII
+================================================================
+
+PROBLEMĂ: TypeScript eroare la VITE_API_URL
+  "Property 'VITE_API_URL' does not exist on type 'ImportMeta'"
+FIX: Creează fișierul frontend/src/vite-env.d.ts (sau adaugă în cel existent):
+  /// <reference types="vite/client" />
+  interface ImportMetaEnv {
+    readonly VITE_API_URL: string;
+  }
+  interface ImportMeta {
+    readonly env: ImportMetaEnv;
+  }
+
+PROBLEMĂ: "Network Error" sau "ERR_NETWORK" în Console
+CAUZA: Backend-ul nu rulează sau portul din .env e greșit
+FIX: Verifică că backend-ul e pornit. Verifică VITE_API_URL din .env
+     (portul vine din launchSettings.json → profil "https" → 7128)
+
+PROBLEMĂ: CORS eroare în Console
+CAUZA: app.UseCors lipsă sau pusă după UseAuthentication
+FIX: Reverifică Pas 1. Ordinea corectă:
+     UseHttpsRedirection → UseCors → UseAuthentication → UseAuthorization
+
+PROBLEMĂ: username sau role apare "undefined" după login
+CAUZA: Cheile din JWT nu sunt "unique_name" / "role"
+FIX: Fă login din Swagger → copiază token → jwt.io → uită-te la Payload
+     Actualizezi getUser() în auth.ts cu cheile corecte
+
+PROBLEMĂ: Doctors page afișează date goale (array gol)
+CAUZA: Baza de date e goală (nu ai adăugat doctori)
+FIX: Adaugă doctori din Swagger: POST /api/doctors
+     Body: {"name":"Dr. Ion","specialty":"Cardiologie","rating":4.5,"location":"Chișinău"}
+
+PROBLEMĂ: 401 pe /appointments deși ești logat
+CAUZA: Token expirat (durată 60 min) sau cheia din localStorage diferă
+FIX: Logout + Login din nou. Verifică că TOKEN_KEY din auth.ts
+     ("clinicqueue_token") e același cu ce verifică interceptorul din ApiContext
+
+================================================================
+REZUMAT RAPID (CHECKLIST)
+================================================================
+
+  [ ] PAS 1:  Program.cs → CORS (backend)
+  [ ] PAS 2:  frontend/.env cu VITE_API_URL + frontend/.env.example
+  [ ] PAS 3:  src/context/ApiContext.tsx (Provider + useApi)
+  [ ] PAS 4:  src/services/auth.ts (JWT real)
+  [ ] PAS 5:  Șterge src/types/auth.ts
+  [ ] PAS 6:  src/pages/ServerDownPage.tsx (pagina 500)
+  [ ] PAS 7:  src/components/DoctorCard.tsx
+  [ ] PAS 8:  src/components/AppointmentCard.tsx
+  [ ] PAS 9:  src/pages/LoginPage.tsx (useRef, fără onChange)
+  [ ] PAS 10: src/pages/DoctorsPage.tsx (API real + DoctorCard)
+  [ ] PAS 11: src/pages/AppointmentsPage.tsx (API real + AppointmentCard)
+  [ ] PAS 12: src/components/ProtectedRoute.tsx (Role cu majusculă)
+  [ ] PAS 13: src/layouts/AppLayout.tsx (1 linie: "Admin" cu A mare)
+  [ ] PAS 14: src/main.tsx (ApiProvider + ruta /500)
+  [ ] PAS 15: Verifică .gitignore are .env
+  [ ] PAS 16: Test complet (6 scenarii)
+
+================================================================
+COMMIT RECOMANDAT DUPĂ ETAPA 6
+================================================================
+
+  git checkout -b etapa6-integrare   (creează branch nou din etapa5)
+  git add -A
+  git commit -m "feat: Etapa 6 - Axios Provider, JWT real, integrare API"
+  git push origin etapa6-integrare
+
+  NU uita: .env NU se pune pe git (e în .gitignore)
+           .env.example DA se pune pe git
+
+================================================================
+  Dacă ai erori, trimite-mi mesajul exact din Console (F12) sau
+  din Output-ul Visual Studio. Nu ghicim — diagnosticăm.
+================================================================

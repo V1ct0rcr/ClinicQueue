@@ -1,106 +1,111 @@
-﻿import React, { useMemo, useState } from "react";
+﻿import React, { useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { setUser, type Role } from "../services/auth";
-
-type Option = { label: string; username: string; role: Role; hint: string };
+import { login } from "../services/auth";
+import { useApi } from "../context/ApiContext";
 
 export function LoginPage() {
-    const navigate = useNavigate();
-    const location = useLocation() as { state?: { from?: string } };
+  const api = useApi();
+  const navigate = useNavigate();
+  const location = useLocation() as { state?: { from?: string } };
 
-    const options: Option[] = useMemo(
-        () => [
-            { label: "Guest", username: "guest", role: "guest", hint: "fără drepturi" },
-            { label: "User", username: "user", role: "user", hint: "utilizator normal" },
-            { label: "Admin", username: "admin", role: "admin", hint: "acces la /admin" },
-        ],
-        []
-    );
+  const credentialRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
-    const [selected, setSelected] = useState<Option>(options[0]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-    function onSubmit(e: React.FormEvent) {
-        e.preventDefault();
-        setUser({ username: selected.username, role: selected.role });
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
 
-        // dacă ProtectedRoute a trimis { state: { from: "/admin" } }, te întoarce acolo
-        const backTo = location.state?.from ?? "/";
-        navigate(backTo, { replace: true });
+    const credential = credentialRef.current?.value ?? "";
+    const password = passwordRef.current?.value ?? "";
+
+    try {
+      await login(api, credential, password);
+      const backTo = location.state?.from ?? "/";
+      navigate(backTo, { replace: true });
+    } catch {
+      setError("Credențiale incorecte. Verifică username/email și parola.");
+    } finally {
+      setLoading(false);
     }
+  }
 
-    return (
-        <div style={{ display: "grid", gap: 12 }}>
-            <h1 style={{ margin: 0, fontSize: 56 }}>Login (mock)</h1>
-            <div style={{ color: "#475569", fontSize: 18 }}>
-                Alege un user de test. Nu există backend, salvăm în <code>localStorage</code>.
-            </div>
+  const inputStyle: React.CSSProperties = {
+    padding: "10px 14px",
+    borderRadius: 10,
+    border: "1px solid #e2e8f0",
+    fontSize: 15,
+    width: "100%",
+    boxSizing: "border-box",
+  };
 
-            <form onSubmit={onSubmit} style={{ display: "grid", gap: 12, maxWidth: 720 }}>
-                <div style={{ display: "grid", gap: 10 }}>
-                    <div style={{ fontSize: 18, fontWeight: 900 }}>Alege rol</div>
+  return (
+    <div style={{ display: "grid", gap: 16, maxWidth: 400 }}>
+      <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900 }}>Login</h1>
+      <p style={{ margin: 0, color: "#475569", fontSize: 14 }}>
+        Introdu username sau email și parola contului tău.
+      </p>
 
-                    <div
-                        style={{
-                            display: "grid",
-                            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                            gap: 10,
-                        }}
-                    >
-                        {options.map((o) => {
-                            const active = o.role === selected.role;
-
-                            return (
-                                <button
-                                    key={o.role}
-                                    type="button"
-                                    onClick={() => setSelected(o)}
-                                    style={{
-                                        textAlign: "left",
-                                        padding: 14,
-                                        borderRadius: 14,
-                                        border: active ? "2px solid #0f172a" : "1px solid #e2e8f0",
-                                        background: active ? "#0f172a" : "white",
-                                        color: active ? "white" : "#0f172a",
-                                        cursor: "pointer",
-                                    }}
-                                >
-                                    <div style={{ fontWeight: 900, fontSize: 16 }}>{o.label}</div>
-                                    <div style={{ fontSize: 13, opacity: active ? 0.9 : 0.75 }}>{o.hint}</div>
-                                </button>
-                            );
-                        })}
-                    </div>
-
-                    <div
-                        style={{
-                            padding: 12,
-                            borderRadius: 14,
-                            border: "1px solid #e2e8f0",
-                            background: "#f8fafc",
-                            color: "#334155",
-                            fontSize: 14,
-                        }}
-                    >
-                        Selectat: <b>{selected.username}</b> (role: <b>{selected.role}</b>)
-                    </div>
-                </div>
-
-                <button
-                    type="submit"
-                    style={{
-                        padding: "12px 14px",
-                        borderRadius: 14,
-                        border: "1px solid #0f172a",
-                        background: "#0f172a",
-                        color: "white",
-                        fontWeight: 900,
-                        cursor: "pointer",
-                        width: "fit-content",
-                    }}
-                >
-                    Intră ca {selected.label}
-                </button>
-            </form>
+      <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gap: 6 }}>
+          <label style={{ fontWeight: 700, fontSize: 14 }}>
+            Username sau Email
+          </label>
+          <input
+            ref={credentialRef}
+            type="text"
+            placeholder="ion.popescu sau ion@email.com"
+            required
+            style={inputStyle}
+          />
         </div>
-    );
+
+        <div style={{ display: "grid", gap: 6 }}>
+          <label style={{ fontWeight: 700, fontSize: 14 }}>Parolă</label>
+          <input
+            ref={passwordRef}
+            type="password"
+            placeholder="••••••••"
+            required
+            style={inputStyle}
+          />
+        </div>
+
+        {error && (
+          <div
+            style={{
+              padding: "10px 14px",
+              borderRadius: 10,
+              background: "#fef2f2",
+              border: "1px solid #fecaca",
+              color: "#dc2626",
+              fontSize: 14,
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          style={{
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: 0,
+            background: loading ? "#94a3b8" : "#0f172a",
+            color: "white",
+            fontWeight: 900,
+            fontSize: 15,
+            cursor: loading ? "not-allowed" : "pointer",
+          }}
+        >
+          {loading ? "Se autentifică..." : "Intră în cont"}
+        </button>
+      </form>
+    </div>
+  );
 }
